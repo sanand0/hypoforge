@@ -9,7 +9,12 @@ import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-bui
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
-const $demos = document.getElementById("demos");
+const $demoList = document.getElementById("demo-list");
+const $fileInput = document.getElementById("file-input");
+const $preview = document.getElementById("preview");
+const $context = document.getElementById("context");
+const $generate = document.getElementById("generate-hypotheses");
+const $demoDropdown = document.getElementById("demo-dropdown");
 const $hypotheses = document.getElementById("hypotheses");
 const $hypothesisPrompt = document.getElementById("hypothesis-prompt");
 const $synthesis = document.getElementById("synthesis");
@@ -59,18 +64,10 @@ marked.use({
 // Load configurations and render the demos
 $status.innerHTML = loading;
 const { demos } = await fetch("config.json").then((r) => r.json());
-$demos.innerHTML = demos
+$demoList.innerHTML = demos
   .map(
-    ({ title, body }, index) => /* html */ `
-      <div class="col py-3">
-        <a class="demo card h-100 text-decoration-none" href="#" data-index="${index}">
-          <div class="card-body">
-            <h5 class="card-title">${title}</h5>
-            <p class="card-text">${body}</p>
-          </div>
-        </a>
-      </div>
-    `
+    ({ title, body }, index) =>
+      `<li><a class="dropdown-item demo" href="#" data-index="${index}"><div>${title}</div><small class="text-muted d-block">${body}</small></a></li>`
   )
   .join("");
 
@@ -158,24 +155,57 @@ async function loadData(demo) {
   }
 }
 
-// When the user clicks on a demo, analyze it
-$demos.addEventListener("click", async (e) => {
+function drawPreview() {
+  const head = Object.keys(data[0]);
+  const rows = data.slice(0, 100);
+  const header = head.map((d) => `<th>${d}</th>`).join("");
+  const body = rows
+    .map((r) => `<tr>${head.map((c) => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`)
+    .join("");
+  $preview.innerHTML = `<div class="table-responsive" style="max-height:300px;overflow:auto"><table class="table table-sm table-striped"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`;
+  document.getElementById("context-section").classList.remove("d-none");
+  $hypotheses.innerHTML = "";
+}
+
+// When the user selects a demo, load it and show preview
+$demoList.addEventListener("click", async (e) => {
   e.preventDefault();
   const $demo = e.target.closest(".demo");
   if (!$demo) return;
 
   const demo = demos[+$demo.dataset.index];
   data = await loadData(demo);
+  $hypothesisPrompt.value = demo.audience;
+  $context.value = demo.context || "";
+  $demoDropdown.textContent = demo.title;
+  drawPreview();
+  $synthesis.classList.add("d-none");
+});
+
+$fileInput.addEventListener("change", async () => {
+  const file = $fileInput.files[0];
+  if (!file) return;
+  const text = await file.text();
+  data = d3.csvParse(text, d3.autoType);
+  $hypothesisPrompt.value = "";
+  $context.value = "";
+  drawPreview();
+  $demoDropdown.textContent = file.name;
+  $synthesis.classList.add("d-none");
+});
+
+$generate.addEventListener("click", async () => {
+  if (!data) return;
   const columnDescription = Object.keys(data[0])
     .map((col) => `- ${col}: ${describe(data, col)}`)
     .join("\n");
   const numColumns = Object.keys(data[0]).length;
   description = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
-  const systemPrompt = ($hypothesisPrompt.value = demo.audience);
+  const systemPrompt = $hypothesisPrompt.value;
   const body = {
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: description },
+      { role: "user", content: `${description}\n\nContext:\n${$context.value}` },
     ],
     response_format: {
       type: "json_schema",
