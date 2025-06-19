@@ -191,7 +191,64 @@ def test_hypothesis(df) -> (bool, float):
       </div>
     </form>
 
-    <div id="demos" class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 my-5 justify-content-center"></div>
+    <!-- Dataset Selection -->
+    <div class="narrative mx-auto my-4 d-md-flex gap-3">
+      <div class="dropdown flex-grow-1">
+        <button class="btn btn-primary dropdown-toggle" type="button" id="demo-dropdown" data-bs-toggle="dropdown" aria-expanded="false">
+          Select a sample dataset
+        </button>
+        <ul class="dropdown-menu" aria-labelledby="demo-dropdown" id="demo-list">
+          <li><h6 class="dropdown-header">Sample Datasets</h6></li>
+          <li><hr class="dropdown-divider"></li>
+        </ul>
+      </div>
+      <div>
+        <label class="btn btn-outline-primary" for="file-upload">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-upload me-2" viewBox="0 0 16 16">
+            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/>
+          </svg>
+          Upload CSV File
+        </label>
+        <input type="file" class="d-none" id="file-upload" accept=".csv">
+      </div>
+    </div>
+  </div>
+
+  <!-- Dataset Preview -->
+  <div class="container-fluid d-none" id="dataset-preview">
+    <div class="row">
+      <div class="col">
+        <h4>Dataset Preview</h4>
+        <div id="preview-loading" class="text-center my-5 d-none">
+          <div class="spinner-border" role="status"></div>
+          <div class="mt-2">Loading dataset...</div>
+        </div>
+        <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+          <table class="table table-sm table-striped" id="preview-table">
+            <thead class="table-dark sticky-top"></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container-fluid">
+    <!-- Context Input -->
+    <div class="narrative mx-auto my-4 d-none" id="context-section">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Analysis Context</h5>
+          <div class="mb-3">
+            <label for="analysis-context" class="form-label">Describe the problem or objective you want to analyze:</label>
+            <textarea class="form-control" id="analysis-context" rows="4" placeholder="E.g., Generate insights for pharmaceutical launch effectiveness, analyze customer behavior patterns, identify optimization opportunities..."></textarea>
+          </div>
+          <button class="btn btn-success" id="generate-hypotheses">Generate Hypotheses</button>
+        </div>
+      </div>
+    </div>
+
     <div id="hypotheses" class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 my-5 justify-content-center"></div>
     <div id="synthesis" class="d-none">
       <div class="text-center">

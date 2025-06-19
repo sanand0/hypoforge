@@ -9,9 +9,15 @@ import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-bui
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
-const $demos = document.getElementById("demos");
+const $demoList = document.getElementById("demo-list");
+const $fileUpload = document.getElementById("file-upload");
+const $datasetPreview = document.getElementById("dataset-preview");
+const $previewLoading = document.getElementById("preview-loading");
+const $previewTable = document.getElementById("preview-table");
+const $contextSection = document.getElementById("context-section");
+const $analysisContext = document.getElementById("analysis-context");
+const $generateHypotheses = document.getElementById("generate-hypotheses");
 const $hypotheses = document.getElementById("hypotheses");
-const $hypothesisPrompt = document.getElementById("hypothesis-prompt");
 const $synthesis = document.getElementById("synthesis");
 const $synthesisResult = document.getElementById("synthesis-result");
 const $status = document.getElementById("status");
@@ -20,6 +26,7 @@ const loading = /* html */ `<div class="text-center my-5"><div class="spinner-bo
 let data;
 let description;
 let hypotheses;
+let currentDemo;
 
 async function* llm(body) {
   const request = {
@@ -59,17 +66,13 @@ marked.use({
 // Load configurations and render the demos
 $status.innerHTML = loading;
 const { demos } = await fetch("config.json").then((r) => r.json());
-$demos.innerHTML = demos
+$demoList.innerHTML += demos
   .map(
     ({ title, body }, index) => /* html */ `
-      <div class="col py-3">
-        <a class="demo card h-100 text-decoration-none" href="#" data-index="${index}">
-          <div class="card-body">
-            <h5 class="card-title">${title}</h5>
-            <p class="card-text">${body}</p>
-          </div>
-        </a>
-      </div>
+      <li><a class="dropdown-item demo-item text-wrap" href="#" data-index="${index}">
+        <strong>${title}</strong><br>
+        <small class="text-muted">${body}</small>
+      </a></li>
     `
   )
   .join("");
@@ -112,7 +115,7 @@ const describe = (data, col) => {
   if (typeof firstVal === "string") {
     // Return the top 3 most frequent values
     const freqMap = d3.rollup(
-      values,
+      values.filter((v) => v),
       (v) => v.length,
       (d) => d
     );
@@ -158,20 +161,97 @@ async function loadData(demo) {
   }
 }
 
-// When the user clicks on a demo, analyze it
-$demos.addEventListener("click", async (e) => {
+// Clear all data and UI elements
+function clearDataAndUI() {
+  // Clear hypotheses
+  $hypotheses.innerHTML = '';
+  $synthesis.classList.add('d-none');
+
+  // Hide context section and preview
+  $contextSection.classList.add('d-none');
+  $datasetPreview.classList.add('d-none');
+
+  // Clear table
+  $previewTable.querySelector('thead').innerHTML = '';
+  $previewTable.querySelector('tbody').innerHTML = '';
+}
+
+// Show loading state
+function showDataLoading() {
+  clearDataAndUI();
+  $datasetPreview.classList.remove('d-none');
+  $previewLoading.classList.remove('d-none');
+}
+
+// Render dataset preview table
+function renderPreview(data, maxRows = 100) {
+  if (!data || !data.length) return;
+
+  const columns = Object.keys(data[0]);
+  const rows = data.slice(0, maxRows);
+
+  const thead = $previewTable.querySelector('thead');
+  const tbody = $previewTable.querySelector('tbody');
+
+  thead.innerHTML = `<tr>${columns.map(col => `<th>${col}</th>`).join('')}</tr>`;
+  tbody.innerHTML = rows.map(row =>
+    `<tr>${columns.map(col => `<td>${row[col] ?? ''}</td>`).join('')}</tr>`
+  ).join('');
+
+  // Hide loading and show content
+  $previewLoading.classList.add('d-none');
+  $datasetPreview.classList.remove('d-none');
+  $contextSection.classList.remove('d-none');
+}
+
+// When the user clicks on a demo, load and preview it
+$demoList.addEventListener("click", async (e) => {
   e.preventDefault();
-  const $demo = e.target.closest(".demo");
+  const $demo = e.target.closest(".demo-item");
   if (!$demo) return;
 
-  const demo = demos[+$demo.dataset.index];
-  data = await loadData(demo);
+  showDataLoading();
+  currentDemo = demos[+$demo.dataset.index];
+  data = await loadData(currentDemo);
+  renderPreview(data);
+
+  // Set context from demo configuration
+  $analysisContext.value = currentDemo.audience;
+});
+
+// Handle file upload
+$fileUpload.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  showDataLoading();
+  currentDemo = null;
+  const text = await file.text();
+  data = d3.csvParse(text, d3.autoType);
+  renderPreview(data);
+
+  // Clear context for custom files
+  $analysisContext.value = '';
+});
+
+// Generate hypotheses button
+$generateHypotheses.addEventListener('click', async () => {
+  if (!data) {
+    alert('Please select a dataset or upload a CSV file first.');
+    return;
+  }
+  if (!$analysisContext.value.trim()) {
+    alert('Please provide analysis context describing what you want to analyze.');
+    return;
+  }
+
   const columnDescription = Object.keys(data[0])
     .map((col) => `- ${col}: ${describe(data, col)}`)
     .join("\n");
   const numColumns = Object.keys(data[0]).length;
   description = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
-  const systemPrompt = ($hypothesisPrompt.value = demo.audience);
+
+  const systemPrompt = $analysisContext.value;
   const body = {
     messages: [
       { role: "system", content: systemPrompt },
@@ -232,6 +312,7 @@ $hypotheses.addEventListener("click", async (e) => {
   const $result = $resultContainer.querySelector(".result");
   const $outcome = $resultContainer.querySelector(".outcome");
   let generatedContent;
+  $result.innerHTML = loading;
   for await (const { content } of llm(body)) {
     if (!content) continue;
     generatedContent = content;
