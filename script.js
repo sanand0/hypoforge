@@ -15,11 +15,17 @@ const $hypothesisPrompt = document.getElementById("hypothesis-prompt");
 const $synthesis = document.getElementById("synthesis");
 const $synthesisResult = document.getElementById("synthesis-result");
 const $status = document.getElementById("status");
+const $upload = document.getElementById("upload-file");
+const $preview = document.getElementById("data-preview");
+const $contextArea = document.getElementById("context-area");
+const $context = document.getElementById("dataset-context");
+const $generate = document.getElementById("generate-hypotheses");
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
 let data;
 let description;
 let hypotheses;
+let currentAudience;
 
 async function* llm(body) {
   const request = {
@@ -37,7 +43,7 @@ async function* llm(body) {
   else request.credentials = "include";
   const baseURL = document.getElementById("baseUrlInput").value;
   for await (const event of asyncLLM(`${baseURL}/chat/completions`, request)) yield event;
-};
+}
 
 saveform("#hypoforge-settings", { exclude: '[type="file"]' });
 
@@ -61,16 +67,11 @@ $status.innerHTML = loading;
 const { demos } = await fetch("config.json").then((r) => r.json());
 $demos.innerHTML = demos
   .map(
-    ({ title, body }, index) => /* html */ `
-      <div class="col py-3">
-        <a class="demo card h-100 text-decoration-none" href="#" data-index="${index}">
-          <div class="card-body">
-            <h5 class="card-title">${title}</h5>
-            <p class="card-text">${body}</p>
-          </div>
-        </a>
-      </div>
-    `
+    ({ title, body }, i) => /* html */ `
+    <button type="button" class="demo list-group-item list-group-item-action" data-index="${i}">
+      <div class="fw-bold">${title}</div>
+      <small class="text-muted">${body}</small>
+    </button>`,
   )
   .join("");
 
@@ -114,7 +115,7 @@ const describe = (data, col) => {
     const freqMap = d3.rollup(
       values,
       (v) => v.length,
-      (d) => d
+      (d) => d,
     );
     const topValues = Array.from(freqMap)
       .sort((a, b) => b[1] - a[1])
@@ -128,6 +129,17 @@ const describe = (data, col) => {
   }
   return "";
 };
+
+function showPreview(rows) {
+  if (!rows?.length) return;
+  const cols = Object.keys(rows[0]);
+  const header = cols.map((c) => `<th>${c}</th>`).join("");
+  const body = rows
+    .slice(0, 100)
+    .map((r) => `<tr>${cols.map((c) => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`)
+    .join("");
+  $preview.innerHTML = `<table class="table table-sm"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+}
 
 const testButton = (index) =>
   /* html */ `<button type="button" class="btn btn-sm btn-primary test-hypothesis" data-index="${index}">Test</button>`;
@@ -158,31 +170,26 @@ async function loadData(demo) {
   }
 }
 
-// When the user clicks on a demo, analyze it
-$demos.addEventListener("click", async (e) => {
-  e.preventDefault();
-  const $demo = e.target.closest(".demo");
-  if (!$demo) return;
+const loadCSVText = (text) => d3.csvParse(text, d3.autoType);
 
-  const demo = demos[+$demo.dataset.index];
-  data = await loadData(demo);
+async function analyzeDataset(audience, context) {
+  if (!data?.length) return;
   const columnDescription = Object.keys(data[0])
-    .map((col) => `- ${col}: ${describe(data, col)}`)
+    .map((c) => `- ${c}: ${describe(data, c)}`)
     .join("\n");
   const numColumns = Object.keys(data[0]).length;
   description = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
-  const systemPrompt = ($hypothesisPrompt.value = demo.audience);
+  const systemPrompt = ($hypothesisPrompt.value = audience ?? $hypothesisPrompt.value);
   const body = {
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: description },
+      { role: "user", content: `${context ? `Context: ${context}\n\n` : ""}${description}` },
     ],
     response_format: {
       type: "json_schema",
       json_schema: { name: "hypotheses", strict: true, schema: hypothesesSchema },
     },
   };
-
   $hypotheses.innerHTML = loading;
   for await (const { content } of llm(body)) {
     if (!content) continue;
@@ -190,7 +197,33 @@ $demos.addEventListener("click", async (e) => {
     drawHypotheses();
   }
   $synthesis.classList.remove("d-none");
+}
+
+// When the user clicks on a demo, analyze it
+$demos.addEventListener("click", async (e) => {
+  e.preventDefault();
+  const $demo = e.target.closest(".demo");
+  if (!$demo) return;
+  const demo = demos[+$demo.dataset.index];
+  data = await loadData(demo);
+  showPreview(data);
+  $context.value = demo.context || "";
+  currentAudience = demo.audience;
+  $contextArea.classList.remove("d-none");
 });
+
+$upload.addEventListener("change", async () => {
+  const file = $upload.files[0];
+  if (!file) return;
+  const text = await file.text();
+  data = loadCSVText(text);
+  showPreview(data);
+  $context.value = "";
+  currentAudience = undefined;
+  $contextArea.classList.remove("d-none");
+});
+
+$generate.addEventListener("click", () => analyzeDataset(currentAudience, $context.value));
 
 function drawHypotheses() {
   if (!Array.isArray(hypotheses)) return;
@@ -209,7 +242,7 @@ function drawHypotheses() {
           </div>
         </div>
       </div>
-    `
+    `,
     )
     .join("");
 }
@@ -266,7 +299,7 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
         {
           role: "user",
           content: `Hypothesis: ${hypothesis.hypothesis}\n\n${description}\n\nResult: ${success}. p-value: ${num(
-            pValue
+            pValue,
           )}`,
         },
       ],
