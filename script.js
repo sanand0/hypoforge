@@ -1,34 +1,54 @@
 // import { render, html } from "https://cdn.jsdelivr.net/npm/lit-html@3/+esm";
 import { asyncLLM } from "https://cdn.jsdelivr.net/npm/asyncllm@2";
 import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import { Marked } from "https://cdn.jsdelivr.net/npm/marked@13/+esm";
 import hljs from "https://cdn.jsdelivr.net/npm/highlight.js@11/+esm";
 import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
+import { openaiConfig } from "https://cdn.jsdelivr.net/npm/bootstrap-llm-provider@1";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
-const $demoList = document.getElementById("demo-list");
-const $fileUpload = document.getElementById("file-upload");
-const $datasetPreview = document.getElementById("dataset-preview");
-const $previewLoading = document.getElementById("preview-loading");
-const $previewTable = document.getElementById("preview-table");
-const $contextSection = document.getElementById("context-section");
-const $analysisContext = document.getElementById("analysis-context");
-const $generateHypotheses = document.getElementById("generate-hypotheses");
-const $hypotheses = document.getElementById("hypotheses");
-const $synthesis = document.getElementById("synthesis");
-const $synthesisResult = document.getElementById("synthesis-result");
-const $status = document.getElementById("status");
+const get = document.getElementById.bind(document);
+const [
+  $demoList,
+  $fileUpload,
+  $datasetPreview,
+  $previewLoading,
+  $previewTable,
+  $contextSection,
+  $analysisContext,
+  $hypotheses,
+  $synthesis,
+  $synthesisResult,
+  $status,
+] = [
+  "demo-list",
+  "file-upload",
+  "dataset-preview",
+  "preview-loading",
+  "preview-table",
+  "context-section",
+  "analysis-context",
+  "hypotheses",
+  "synthesis",
+  "synthesis-result",
+  "status",
+].map(get);
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
-let data;
-let description;
-let hypotheses;
-let currentDemo;
+let data, description, hypotheses, currentDemo;
+
+const DEFAULT_BASE_URLS = [
+  "https://api.openai.com/v1",
+  "https://llmfoundry.straivedemo.com/openai/v1",
+  "https://llmfoundry.straive.com/openai/v1",
+];
 
 async function* llm(body) {
+  const { apiKey, baseUrl } = await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS });
   const request = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -39,14 +59,21 @@ async function* llm(body) {
       stream_options: { include_usage: true },
     }),
   };
-  const token = document.getElementById("apiKeyInput").value;
-  if (token) request.headers.Authorization = `Bearer ${token}`;
+  if (apiKey) request.headers.Authorization = `Bearer ${apiKey}`;
   else request.credentials = "include";
-  const baseURL = document.getElementById("baseUrlInput").value;
-  for await (const event of asyncLLM(`${baseURL}/chat/completions`, request)) yield event;
+  for await (const event of asyncLLM(`${baseUrl}/chat/completions`, request)) yield event;
+}
+
+const stream = async (body, fn) => {
+  for await (const { content } of llm(body)) if (content) fn(content);
 };
+const on = (id, fn) => get(id).addEventListener("click", fn);
 
 saveform("#hypoforge-settings", { exclude: '[type="file"]' });
+
+on("openai-config-btn", async () => {
+  await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
+});
 
 const marked = new Marked();
 marked.use({
@@ -73,7 +100,7 @@ $demoList.innerHTML += demos
         <strong>${title}</strong><br>
         <small class="text-muted">${body}</small>
       </a></li>
-    `
+    `,
   )
   .join("");
 
@@ -117,7 +144,7 @@ const describe = (data, col) => {
     const freqMap = d3.rollup(
       values.filter((v) => v),
       (v) => v.length,
-      (d) => d
+      (d) => d,
     );
     const topValues = Array.from(freqMap)
       .sort((a, b) => b[1] - a[1])
@@ -155,32 +182,35 @@ async function loadData(demo) {
     // Clean up
     uploadDB.close();
     return result;
-  } else {
-    // Load CSV as before
-    return d3.csv(demo.href, d3.autoType);
+  } else if (demo.href.match(/\.xlsx$/i)) {
+    const buffer = await fetch(demo.href).then((r) => r.arrayBuffer());
+    const wb = XLSX.read(buffer, { type: "array" });
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+    return d3.csvParse(csv, d3.autoType);
   }
+  return d3.csv(demo.href, d3.autoType);
 }
 
 // Clear all data and UI elements
 function clearDataAndUI() {
   // Clear hypotheses
-  $hypotheses.innerHTML = '';
-  $synthesis.classList.add('d-none');
+  $hypotheses.innerHTML = "";
+  $synthesis.classList.add("d-none");
 
   // Hide context section and preview
-  $contextSection.classList.add('d-none');
-  $datasetPreview.classList.add('d-none');
+  $contextSection.classList.add("d-none");
+  $datasetPreview.classList.add("d-none");
 
   // Clear table
-  $previewTable.querySelector('thead').innerHTML = '';
-  $previewTable.querySelector('tbody').innerHTML = '';
+  $previewTable.querySelector("thead").innerHTML = "";
+  $previewTable.querySelector("tbody").innerHTML = "";
 }
 
 // Show loading state
 function showDataLoading() {
   clearDataAndUI();
-  $datasetPreview.classList.remove('d-none');
-  $previewLoading.classList.remove('d-none');
+  $datasetPreview.classList.remove("d-none");
+  $previewLoading.classList.remove("d-none");
 }
 
 // Render dataset preview table
@@ -190,18 +220,18 @@ function renderPreview(data, maxRows = 100) {
   const columns = Object.keys(data[0]);
   const rows = data.slice(0, maxRows);
 
-  const thead = $previewTable.querySelector('thead');
-  const tbody = $previewTable.querySelector('tbody');
+  const thead = $previewTable.querySelector("thead");
+  const tbody = $previewTable.querySelector("tbody");
 
-  thead.innerHTML = `<tr>${columns.map(col => `<th>${col}</th>`).join('')}</tr>`;
-  tbody.innerHTML = rows.map(row =>
-    `<tr>${columns.map(col => `<td>${row[col] ?? ''}</td>`).join('')}</tr>`
-  ).join('');
+  thead.innerHTML = `<tr>${columns.map((col) => `<th>${col}</th>`).join("")}</tr>`;
+  tbody.innerHTML = rows
+    .map((row) => `<tr>${columns.map((col) => `<td>${row[col] ?? ""}</td>`).join("")}</tr>`)
+    .join("");
 
   // Hide loading and show content
-  $previewLoading.classList.add('d-none');
-  $datasetPreview.classList.remove('d-none');
-  $contextSection.classList.remove('d-none');
+  $previewLoading.classList.add("d-none");
+  $datasetPreview.classList.remove("d-none");
+  $contextSection.classList.remove("d-none");
 }
 
 // When the user clicks on a demo, load and preview it
@@ -220,28 +250,35 @@ $demoList.addEventListener("click", async (e) => {
 });
 
 // Handle file upload
-$fileUpload.addEventListener('change', async (e) => {
+$fileUpload.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
   showDataLoading();
   currentDemo = null;
-  const text = await file.text();
-  data = d3.csvParse(text, d3.autoType);
+  if (file.name.match(/\.xlsx$/i)) {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+    data = d3.csvParse(csv, d3.autoType);
+  } else {
+    const text = await file.text();
+    data = d3.csvParse(text, d3.autoType);
+  }
   renderPreview(data);
 
   // Clear context for custom files
-  $analysisContext.value = '';
+  $analysisContext.value = "";
 });
 
 // Generate hypotheses button
-$generateHypotheses.addEventListener('click', async () => {
+on("generate-hypotheses", async () => {
   if (!data) {
-    alert('Please select a dataset or upload a CSV file first.');
+    alert("Please select a dataset or upload a CSV/XLSX file first.");
     return;
   }
   if (!$analysisContext.value.trim()) {
-    alert('Please provide analysis context describing what you want to analyze.');
+    alert("Please provide analysis context describing what you want to analyze.");
     return;
   }
 
@@ -264,11 +301,10 @@ $generateHypotheses.addEventListener('click', async () => {
   };
 
   $hypotheses.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    ({ hypotheses } = parse(content));
+  await stream(body, (c) => {
+    ({ hypotheses } = parse(c));
     drawHypotheses();
-  }
+  });
   $synthesis.classList.remove("d-none");
 });
 
@@ -289,7 +325,7 @@ function drawHypotheses() {
           </div>
         </div>
       </div>
-    `
+    `,
     )
     .join("");
 }
@@ -313,11 +349,10 @@ $hypotheses.addEventListener("click", async (e) => {
   const $outcome = $resultContainer.querySelector(".outcome");
   let generatedContent;
   $result.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    generatedContent = content;
-    $result.innerHTML = marked.parse(content);
-  }
+  await stream(body, (c) => {
+    generatedContent = c;
+    $result.innerHTML = marked.parse(c);
+  });
 
   // Extract the code inside the last ```...``` block
   let code = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)].at(-1)[1];
@@ -347,15 +382,14 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
         {
           role: "user",
           content: `Hypothesis: ${hypothesis.hypothesis}\n\n${description}\n\nResult: ${success}. p-value: ${num(
-            pValue
+            pValue,
           )}`,
         },
       ],
     };
-    for await (const { content } of llm(body)) {
-      if (!content) continue;
-      $outcome.innerHTML = marked.parse(content);
-    }
+    await stream(body, (c) => {
+      $outcome.innerHTML = marked.parse(c);
+    });
     $result.innerHTML = /* html */ `<details>
       <summary class="h5 my-3">Analysis</summary>
       ${marked.parse(generatedContent)}
@@ -367,13 +401,13 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
   pyodideWorker.postMessage({ id: "1", code, data, context: {} });
 });
 
-document.querySelector("#run-all").addEventListener("click", async (e) => {
+on("run-all", () => {
   const $hypotheses = [...document.querySelectorAll(".hypothesis")];
   const $pending = $hypotheses.filter((d) => !d.querySelector(".outcome").textContent.trim());
   $pending.forEach((el) => el.querySelector(".test-hypothesis").click());
 });
 
-document.querySelector("#synthesize").addEventListener("click", async (e) => {
+on("synthesize", async () => {
   const hypotheses = [...document.querySelectorAll(".hypothesis")]
     .map((h) => ({
       title: h.querySelector(".hypothesis-title").textContent,
@@ -406,13 +440,12 @@ Finally, after a break (---) add a 1-paragraph executive summary section (H5) su
   };
 
   $synthesisResult.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    $synthesisResult.innerHTML = marked.parse(content);
-  }
+  await stream(body, (c) => {
+    $synthesisResult.innerHTML = marked.parse(c);
+  });
 });
 
-document.querySelector("#reset").addEventListener("click", async (e) => {
+on("reset", () => {
   for (const $hypothesis of document.querySelectorAll(".hypothesis")) {
     $hypothesis.querySelector(".result").innerHTML = testButton($hypothesis.dataset.index);
     $hypothesis.querySelector(".outcome").textContent = "";

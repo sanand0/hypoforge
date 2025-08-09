@@ -5,10 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hypothesis Forge</title>
-  <link
-    rel="icon"
-    type="image/svg+xml"
-    href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTUiIGZpbGw9IiMyNTYzZWIiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtMTYgNyAyIDcgNyAyLTcgMi0yIDctMi03LTctMiA3LTJaIi8+PC9zdmc+" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTUiIGZpbGw9IiMyNTYzZWIiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtMTYgNyAyIDcgNyAyLTcgMi0yIDctMi03LTctMiA3LTJaIi8+PC9zdmc+" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" crossorigin="anonymous" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" crossorigin="anonymous">
   <style>
@@ -31,6 +28,7 @@
     .outcome.failure h5 {
       color: var(--bs-danger);
     }
+
   </style>
 </head>
 
@@ -42,7 +40,9 @@
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
-        <div class="ms-auto"><div class="bootstrap-dark-theme"></div></div>
+        <div class="ms-auto">
+          <div class="bootstrap-dark-theme"></div>
+        </div>
       </div>
     </div>
   </nav>
@@ -55,83 +55,25 @@
     </div>
 
     <form id="hypoforge-settings" class="narrative mx-auto">
-      <div class="my-4 p-4 card rounded-3 shadow-sm">
-        <h2 class="h5">
+      <details class="my-4 card rounded-3 shadow-sm" open>
+        <summary class="h5 p-4">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-gear" viewBox="0 0 16 16">
             <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492M5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0" />
             <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115z" />
           </svg>
           Settings
-        </h2>
-
-        <div class="accordion my-3" id="advancedSettings">
-          <!-- API Key Setting -->
-          <div class="accordion-item">
-            <h2 class="accordion-header">
-              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#apiKeyCollapse" aria-expanded="false" aria-controls="apiKeyCollapse">
-                <i class="bi bi-key me-2"></i>OpenAI API Key
-              </button>
-            </h2>
-            <div id="apiKeyCollapse" class="accordion-collapse collapse" data-bs-parent="#advancedSettings">
-              <div class="accordion-body">
-                <div class="mb-3">
-                  <label for="apiKeyInput" class="form-label">Enter your OpenAI API Key:</label>
-                  <input type="password" class="form-control" id="apiKeyInput" placeholder="sk-...">
-                  <div class="form-text">Your API key is stored locally in your browser and never sent to our servers.</div>
-                </div>
-              </div>
-            </div>
+        </summary>
+        <div class="p-4 pt-0">
+          <div class="mb-3">
+            <button type="button" class="btn btn-outline-secondary" id="openai-config-btn">Configure OpenAI</button>
           </div>
-
-          <!-- Base URL Setting -->
-          <div class="accordion-item">
-            <h2 class="accordion-header">
-              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#baseUrlCollapse" aria-expanded="false" aria-controls="baseUrlCollapse">
-                <i class="bi bi-key me-2"></i>Base URL
-              </button>
-            </h2>
-            <div id="baseUrlCollapse" class="accordion-collapse collapse" data-bs-parent="#advancedSettings">
-              <div class="accordion-body">
-                <div class="mb-3">
-                  <label for="baseUrlInput" class="form-label">Enter your OpenAI API Base URL:</label>
-                  <input type="text" class="form-control" id="baseUrlInput" value="https://llmfoundry.straive.com/openai/v1" list="baseUrlList">
-                  <datalist id="baseUrlList">
-                    <option value="https://api.openai.com/v1"></option>
-                    <option value="https://llmfoundry.straive.com/openai/v1"></option>
-                    <option value="https://llmfoundry.straivedemo.com/openai/v1"></option>
-                    <option value="https://openrouter.ai/api/v1" disabled></option>
-                    <option value="https://aipipe.org/openai/v1" disabled></option>
-                  </datalist>
-                  <div class="form-text">Your API key is stored locally in your browser and never sent to our servers.</div>
-                </div>
-              </div>
-            </div>
+          <div class="mb-3">
+            <label for="hypothesis-prompt" class="form-label fw-bold">Hypothesis Generation Prompt</label>
+            <textarea id="hypothesis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for hypothesis generation (optional)"></textarea>
           </div>
-
-          <!-- System Prompt Setting -->
-          <div class="accordion-item">
-            <h2 class="accordion-header">
-              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#systemPromptCollapse" aria-expanded="false" aria-controls="systemPromptCollapse">
-                <i class="bi bi-chat-square-text me-2"></i>System Prompt &amp; Model
-              </button>
-            </h2>
-            <div id="systemPromptCollapse" class="accordion-collapse collapse" data-bs-parent="#advancedSettings">
-              <div class="accordion-body">
-                <div class="mb-3">
-                  <label for="hypothesis-prompt" class="form-label fw-bold">Hypothesis Generation Prompt</label>
-                  <textarea
-                    id="hypothesis-prompt"
-                    class="form-control font-monospace"
-                    rows="5"
-                    placeholder="Enter custom prompt for hypothesis generation (optional)"></textarea>
-                </div>
-                <div class="mb-3">
-                  <label for="analysis-prompt" class="form-label fw-bold">Analysis Prompt</label>
-                  <textarea
-                    id="analysis-prompt"
-                    class="form-control font-monospace"
-                    rows="5"
-                    placeholder="Enter custom prompt for analysis (optional)">You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
+          <div class="mb-3">
+            <label for="analysis-prompt" class="form-label fw-bold">Analysis Prompt</label>
+            <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)">You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
 
 1. Create derived columns ONLY IF REQUIRED. E.g. If "CurrentMedication" contains "insulin", classify it as "Injectable", otherwise as "Pill".
 2. If that's not possible, provide the best possible answer based on available data to the hypothesis, making assumptions.
@@ -149,23 +91,20 @@ def test_hypothesis(df) -> (bool, float):
     return result, p_value
 \`\`\`
 </textarea>
-                </div>
-                <div class="mb-3">
-                  <label for="model" class="form-label">Choose the model:</label>
-                  <input type="text" class="form-control" id="model" value="gpt-4.1-mini" list="modelList">
-                  <datalist id="modelList">
-                    <option value="gpt-4.1-nano"></option>
-                    <option value="gpt-4.1-mini"></option>
-                    <option value="gpt-4.1"></option>
-                    <option value="gpt-4o"></option>
-                    <option value="o4-mini"></option>
-                  </datalist>
-                </div>
-              </div>
-            </div>
+          </div>
+          <div class="mb-3">
+            <label for="model" class="form-label">Choose the model:</label>
+            <input type="text" class="form-control" id="model" value="gpt-5-mini" list="model-list">
+            <datalist id="model-list">
+              <option value="gpt-5-nano"></option>
+              <option value="gpt-5-mini"></option>
+              <option value="gpt-5"></option>
+              <option value="gpt-4.1-mini"></option>
+              <option value="gpt-4o"></option>
+            </datalist>
           </div>
         </div>
-      </div>
+      </details>
     </form>
 
     <!-- Dataset Selection -->
@@ -175,19 +114,23 @@ def test_hypothesis(df) -> (bool, float):
           Select a sample dataset
         </button>
         <ul class="dropdown-menu" aria-labelledby="demo-dropdown" id="demo-list">
-          <li><h6 class="dropdown-header">Sample Datasets</h6></li>
-          <li><hr class="dropdown-divider"></li>
+          <li>
+            <h6 class="dropdown-header">Sample Datasets</h6>
+          </li>
+          <li>
+            <hr class="dropdown-divider">
+          </li>
         </ul>
       </div>
       <div>
         <label class="btn btn-outline-primary" for="file-upload">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-upload me-2" viewBox="0 0 16 16">
-            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
-            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/>
+            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5" />
+            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z" />
           </svg>
-          Upload CSV File
+          Upload CSV/XLSX File
         </label>
-        <input type="file" class="d-none" id="file-upload" accept=".csv">
+        <input type="file" class="d-none" id="file-upload" accept=".csv,.xlsx">
       </div>
     </div>
   </div>
