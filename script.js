@@ -11,25 +11,35 @@ import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-bui
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
-const $demoList = document.getElementById("demo-list");
-const $fileUpload = document.getElementById("file-upload");
-const $datasetPreview = document.getElementById("dataset-preview");
-const $previewLoading = document.getElementById("preview-loading");
-const $previewTable = document.getElementById("preview-table");
-const $contextSection = document.getElementById("context-section");
-const $analysisContext = document.getElementById("analysis-context");
-const $generateHypotheses = document.getElementById("generate-hypotheses");
-const $hypotheses = document.getElementById("hypotheses");
-const $synthesis = document.getElementById("synthesis");
-const $synthesisResult = document.getElementById("synthesis-result");
-const $status = document.getElementById("status");
-const $configBtn = document.getElementById("openai-config-btn");
+const get = document.getElementById.bind(document);
+const [
+  $demoList,
+  $fileUpload,
+  $datasetPreview,
+  $previewLoading,
+  $previewTable,
+  $contextSection,
+  $analysisContext,
+  $hypotheses,
+  $synthesis,
+  $synthesisResult,
+  $status,
+] = [
+  "demo-list",
+  "file-upload",
+  "dataset-preview",
+  "preview-loading",
+  "preview-table",
+  "context-section",
+  "analysis-context",
+  "hypotheses",
+  "synthesis",
+  "synthesis-result",
+  "status",
+].map(get);
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
-let data;
-let description;
-let hypotheses;
-let currentDemo;
+let data, description, hypotheses, currentDemo;
 
 const DEFAULT_BASE_URLS = [
   "https://api.openai.com/v1",
@@ -54,9 +64,14 @@ async function* llm(body) {
   for await (const event of asyncLLM(`${baseUrl}/chat/completions`, request)) yield event;
 }
 
+const stream = async (body, fn) => {
+  for await (const { content } of llm(body)) if (content) fn(content);
+};
+const on = (id, fn) => get(id).addEventListener("click", fn);
+
 saveform("#hypoforge-settings", { exclude: '[type="file"]' });
 
-$configBtn.addEventListener("click", async () => {
+on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
 });
 
@@ -257,7 +272,7 @@ $fileUpload.addEventListener("change", async (e) => {
 });
 
 // Generate hypotheses button
-$generateHypotheses.addEventListener("click", async () => {
+on("generate-hypotheses", async () => {
   if (!data) {
     alert("Please select a dataset or upload a CSV/XLSX file first.");
     return;
@@ -286,11 +301,10 @@ $generateHypotheses.addEventListener("click", async () => {
   };
 
   $hypotheses.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    ({ hypotheses } = parse(content));
+  await stream(body, (c) => {
+    ({ hypotheses } = parse(c));
     drawHypotheses();
-  }
+  });
   $synthesis.classList.remove("d-none");
 });
 
@@ -335,11 +349,10 @@ $hypotheses.addEventListener("click", async (e) => {
   const $outcome = $resultContainer.querySelector(".outcome");
   let generatedContent;
   $result.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    generatedContent = content;
-    $result.innerHTML = marked.parse(content);
-  }
+  await stream(body, (c) => {
+    generatedContent = c;
+    $result.innerHTML = marked.parse(c);
+  });
 
   // Extract the code inside the last ```...``` block
   let code = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)].at(-1)[1];
@@ -374,10 +387,9 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
         },
       ],
     };
-    for await (const { content } of llm(body)) {
-      if (!content) continue;
-      $outcome.innerHTML = marked.parse(content);
-    }
+    await stream(body, (c) => {
+      $outcome.innerHTML = marked.parse(c);
+    });
     $result.innerHTML = /* html */ `<details>
       <summary class="h5 my-3">Analysis</summary>
       ${marked.parse(generatedContent)}
@@ -389,13 +401,13 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
   pyodideWorker.postMessage({ id: "1", code, data, context: {} });
 });
 
-document.querySelector("#run-all").addEventListener("click", async (e) => {
+on("run-all", () => {
   const $hypotheses = [...document.querySelectorAll(".hypothesis")];
   const $pending = $hypotheses.filter((d) => !d.querySelector(".outcome").textContent.trim());
   $pending.forEach((el) => el.querySelector(".test-hypothesis").click());
 });
 
-document.querySelector("#synthesize").addEventListener("click", async (e) => {
+on("synthesize", async () => {
   const hypotheses = [...document.querySelectorAll(".hypothesis")]
     .map((h) => ({
       title: h.querySelector(".hypothesis-title").textContent,
@@ -428,13 +440,12 @@ Finally, after a break (---) add a 1-paragraph executive summary section (H5) su
   };
 
   $synthesisResult.innerHTML = loading;
-  for await (const { content } of llm(body)) {
-    if (!content) continue;
-    $synthesisResult.innerHTML = marked.parse(content);
-  }
+  await stream(body, (c) => {
+    $synthesisResult.innerHTML = marked.parse(c);
+  });
 });
 
-document.querySelector("#reset").addEventListener("click", async (e) => {
+on("reset", () => {
   for (const $hypothesis of document.querySelectorAll(".hypothesis")) {
     $hypothesis.querySelector(".result").innerHTML = testButton($hypothesis.dataset.index);
     $hypothesis.querySelector(".outcome").textContent = "";
