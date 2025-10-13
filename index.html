@@ -68,10 +68,6 @@
             <button type="button" class="btn btn-outline-secondary" id="openai-config-btn">Configure OpenAI</button>
           </div>
           <div class="mb-3">
-            <label for="hypothesis-prompt" class="form-label fw-bold">Hypothesis Generation Prompt</label>
-            <textarea id="hypothesis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for hypothesis generation (optional)"></textarea>
-          </div>
-          <div class="mb-3">
             <label for="analysis-prompt" class="form-label fw-bold">Analysis Prompt</label>
             <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)">You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
 
@@ -144,7 +140,7 @@ def test_hypothesis(df) -> (bool, float):
           <div class="spinner-border" role="status"></div>
           <div class="mt-2">Loading dataset...</div>
         </div>
-        <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <div class="table-responsive text-nowrap" style="max-height: 400px; overflow-y: auto">
           <table class="table table-sm table-striped" id="preview-table">
             <thead class="table-dark sticky-top"></thead>
             <tbody></tbody>
