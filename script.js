@@ -1,12 +1,12 @@
 // import { render, html } from "https://cdn.jsdelivr.net/npm/lit-html@3/+esm";
 import { asyncLLM } from "https://cdn.jsdelivr.net/npm/asyncllm@2";
+import { openaiConfig } from "https://cdn.jsdelivr.net/npm/bootstrap-llm-provider@1";
 import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
-import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
-import { Marked } from "https://cdn.jsdelivr.net/npm/marked@13/+esm";
 import hljs from "https://cdn.jsdelivr.net/npm/highlight.js@11/+esm";
+import { Marked } from "https://cdn.jsdelivr.net/npm/marked@13/+esm";
 import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
-import { openaiConfig } from "https://cdn.jsdelivr.net/npm/bootstrap-llm-provider@1";
+import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
@@ -69,7 +69,7 @@ const stream = async (body, fn) => {
 };
 const on = (id, fn) => get(id).addEventListener("click", fn);
 
-saveform("#hypoforge-settings", { exclude: '[type="file"]' });
+saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
 on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
@@ -83,9 +83,8 @@ marked.use({
     },
     code(code, lang) {
       const language = hljs.getLanguage(lang) ? lang : "plaintext";
-      return /* html */ `<pre class="hljs language-${language}"><code>${hljs
-        .highlight(code, { language })
-        .value.trim()}</code></pre>`;
+      const content = hljs.highlight(code, { language }).value.trim();
+      return /* html */ `<pre class="hljs language-${language}"><code>${content}</code></pre>`;
     },
   },
 });
@@ -320,8 +319,10 @@ function drawHypotheses() {
             <p class="card-text hypothesis-benefit">${benefit}</p>
           </div>
           <div class="card-footer">
-            <div class="result">${testButton(index)}</div>
+            <div class="result"></div>
             <div class="outcome"></div>
+            <div class="stats small text-secondary font-monospace mb-3"></div>
+            <div>${testButton(index)}</div>
           </div>
         </div>
       </div>
@@ -347,6 +348,7 @@ $hypotheses.addEventListener("click", async (e) => {
   const $resultContainer = $hypothesis.closest(".card");
   const $result = $resultContainer.querySelector(".result");
   const $outcome = $resultContainer.querySelector(".outcome");
+  const $stats = $resultContainer.querySelector(".stats");
   let generatedContent;
   $result.innerHTML = loading;
   await stream(body, (c) => {
@@ -370,6 +372,7 @@ $hypotheses.addEventListener("click", async (e) => {
     }
     const [success, pValue] = result;
     $outcome.classList.add(pValue < 0.05 ? "success" : "failure");
+    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0"><strong>p:</strong> ${num(pValue)}</p>`;
     const body = {
       messages: [
         {
@@ -381,9 +384,9 @@ Do not mention the p-value but _interpret_ it to support the conclusion quantita
         },
         {
           role: "user",
-          content: `Hypothesis: ${hypothesis.hypothesis}\n\n${description}\n\nResult: ${success}. p-value: ${num(
-            pValue,
-          )}`,
+          content: `Hypothesis: ${hypothesis.hypothesis}\n\n${description}\n\nResult: ${success}. p-value: ${
+            num(pValue)
+          }`,
         },
       ],
     };
