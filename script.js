@@ -11,6 +11,28 @@ import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-bui
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
+// Run code in an ephemeral Pyodide worker with a timeout
+async function runPythonEphemeral({ code, data, context, timeoutMs = 30000 }) {
+  return new Promise((resolve) => {
+    const id = `py-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const worker = new Worker("./pyworker.js", { type: "module" });
+    const onMessage = (event) => {
+      if (event.data?.id !== id) return;
+      clearTimeout(timer);
+      worker.removeEventListener("message", onMessage);
+      worker.terminate();
+      resolve(event.data);
+    };
+    worker.addEventListener("message", onMessage);
+    const timer = setTimeout(() => {
+      worker.removeEventListener("message", onMessage);
+      worker.terminate();
+      resolve({ id, error: `Execution timed out after ${timeoutMs} ms` });
+    }, timeoutMs);
+    worker.postMessage({ id, code, data, context });
+  });
+}
+
 const get = document.getElementById.bind(document);
 const [
   $demoList,
@@ -40,6 +62,7 @@ const [
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
 let data, description, hypotheses, currentDemo;
+let modelingExperiments;
 
 const DEFAULT_BASE_URLS = [
   "https://api.openai.com/v1",
@@ -47,7 +70,7 @@ const DEFAULT_BASE_URLS = [
   "https://llmfoundry.straive.com/openai/v1",
 ];
 
-async function* llm(body) {
+async function* llm(body, options = {}) {
   const { apiKey, baseUrl } = await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS });
   const request = {
     method: "POST",
@@ -61,13 +84,19 @@ async function* llm(body) {
   };
   if (apiKey) request.headers.Authorization = `Bearer ${apiKey}`;
   else request.credentials = "include";
+  if (options.signal) request.signal = options.signal;
   for await (const event of asyncLLM(`${baseUrl}/chat/completions`, request)) yield event;
 }
 
 const stream = async (body, fn) => {
   for await (const { content } of llm(body)) if (content) fn(content);
 };
-const on = (id, fn) => get(id).addEventListener("click", fn);
+
+// (Removed) streamWithControls was unused; simplified to `stream` above.
+const on = (id, fn) => {
+  const el = get(id);
+  if (el) el.addEventListener("click", fn);
+};
 
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
@@ -134,6 +163,58 @@ const hypothesesSchema = {
   required: ["hypotheses"],
   additionalProperties: false,
 };
+
+// // Schema for modeling plan generation
+// const modelingSchema = {
+//   type: "object",
+//   properties: {
+//     experiments: {
+//       type: "array",
+//       items: {
+//         type: "object",
+//         properties: {
+//           title: { type: "string" },
+//           problem_type: { type: "string" },
+//           target: { type: ["string", "null"] },
+//           split: {
+//             type: "object",
+//             properties: {
+//               test_size: { type: "number" },
+//               random_state: { type: "number" },
+//               stratify: { type: ["boolean", "string", "null"] },
+//             },
+//             required: ["test_size", "random_state"],
+//             additionalProperties: true,
+//           },
+//           models: {
+//             type: "array",
+//             items: { type: "string" },
+//           },
+//           metrics: {
+//             type: "array",
+//             items: { type: "string" },
+//           },
+//           notes: { type: "string" },
+//         },
+//         required: ["title", "problem_type", "split", "models"],
+//         additionalProperties: true,
+//       },
+//     },
+//   },
+//   required: ["experiments"],
+//   additionalProperties: false,
+// };
+
+// // Schema to force single Python payload in JSON for modeling code
+// const modelCodeSchema = {
+//   type: "object",
+//   properties: {
+//     code: { type: "string" },
+//     rationale: { type: ["string", "null"] },
+//   },
+//   required: ["code"],
+//   additionalProperties: false,
+// };
 
 const describe = (data, col) => {
   const values = data.map((d) => d[col]);
@@ -247,6 +328,133 @@ $demoList.addEventListener("click", async (e) => {
   // Set context from demo configuration
   $analysisContext.value = currentDemo.audience;
 });
+
+// Modeling UI elements
+const $modeling = get("modeling");
+const $modelResults = get("model-results");
+const $modelStatus = get("model-status");
+const $modelControls = get("model-controls");
+const $modelExperiments = get("model-experiments");
+
+// Helper to build a dataset description on demand
+function buildDescription() {
+  if (!data || !data.length) return "";
+  const columnDescription = Object.keys(data[0])
+    .map((col) => `- ${col}: ${describe(data, col)}`)
+    .join("\n");
+  const numColumns = Object.keys(data[0]).length;
+  return `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
+}
+
+// Heuristic: guess a reasonable target column from data and context
+function guessTarget(rows, context = "") {
+  try {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const columns = Object.keys(rows[0] || {});
+    if (!columns.length) return null;
+    const lc = columns.map((c) => c.toLowerCase());
+    const ctx = String(context || "").toLowerCase();
+
+    const avoid = (name) => {
+      const n = name.toLowerCase();
+      return (
+        /(^|_)(id|uuid)$/.test(n) ||
+        n.includes("timestamp") ||
+        n.includes("time") ||
+        n.includes("date") ||
+        n.includes("email") ||
+        n.includes("phone") ||
+        n.includes("name")
+      );
+    };
+
+    const preferOrder = (names) => {
+      for (const key of names) {
+        const idx = lc.findIndex(
+          (c) => c === key || c.endsWith("_" + key) || c.includes(key)
+        );
+        if (idx !== -1) return columns[idx];
+      }
+      return null;
+    };
+
+    // Context-driven hints
+    if (ctx.includes("churn")) {
+      const hit = preferOrder(["churn", "is_churn", "churned", "retained"]);
+      if (hit) return hit;
+    }
+    if (ctx.includes("fraud")) {
+      const hit = preferOrder(["fraud", "is_fraud", "fraud_flag"]);
+      if (hit) return hit;
+    }
+    if (ctx.includes("conversion") || ctx.includes("convert")) {
+      const hit = preferOrder(["converted", "conversion", "is_conversion"]);
+      if (hit) return hit;
+    }
+
+    // Name-based common targets
+    const nameFirst =
+      preferOrder([
+        "target",
+        "label",
+        "class",
+        "category",
+        "churn",
+        "converted",
+        "default",
+        "fraud",
+        "response",
+        "won",
+        "lost",
+        "click",
+        "purchased",
+      ]) || null;
+    if (nameFirst) return nameFirst;
+
+    // Data-driven: find a categorical-like column that's not ID-like
+    const sample = rows.slice(0, 1000);
+    let bestCat = null;
+    for (const col of columns) {
+      if (avoid(col)) continue;
+      const vals = sample
+        .map((r) => r[col])
+        .filter((v) => v !== null && v !== undefined && v !== "");
+      if (!vals.length) continue;
+      const first = vals.find((v) => v !== null && v !== undefined);
+      const isNum = typeof first === "number";
+      const uniq = new Set(
+        vals.map((v) => (isNum ? v : String(v).toLowerCase().trim()))
+      ).size;
+      const uniqRatio = uniq / vals.length;
+      if (!isNum && uniq >= 2 && uniq <= 50 && uniqRatio <= 0.5) {
+        bestCat = col;
+        break;
+      }
+    }
+    if (bestCat) return bestCat;
+
+    // Fallback: pick a numeric column with sufficient variability
+    for (const col of columns) {
+      if (avoid(col)) continue;
+      const nums = sample
+        .map((r) => r[col])
+        .filter((v) => typeof v === "number");
+      if (nums.length < sample.length * 0.5) continue;
+      const uniq = new Set(nums).size;
+      if (uniq >= Math.min(10, Math.ceil(nums.length * 0.1))) return col;
+    }
+  } catch (e) {
+    // Best-effort; swallow errors
+  }
+  return null;
+}
+
+function escapeHtml(str) {
+  return str
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
 
 // Handle file upload
 $fileUpload.addEventListener("change", async (e) => {
@@ -454,6 +662,266 @@ on("reset", () => {
     $hypothesis.querySelector(".outcome").textContent = "";
   }
 });
+
+// Generate modeling experiment plans (cards) and per-card testing
+// Expose the same functionality under a named function for reuse
+async function buildModels() {
+  if (!data) {
+    alert("Please select a dataset or upload a CSV/XLSX file first.");
+    return;
+  }
+  if (!$analysisContext.value.trim()) {
+    alert("Please provide analysis context describing the question or objective.");
+    return;
+  }
+
+  description = buildDescription();
+
+  const sys = `You are an expert ML engineer. Propose a series of modeling experiments for the user's question and dataset. STRICTLY order experiments by increasing complexity: start with the simplest single-model baselines, then progress through regularized linear methods, shallow trees, bagging, boosting, and finally stacked/voting combinations. Do NOT include any ensemble/stacking before the simpler families are covered.
+
+Respond ONLY with a JSON object of the form { "experiments": [...] } and nothing else.
+
+For each experiment, include exactly these keys:
+- problem_type: "classification" | "regression" | ... -- Explain why?
+- title: short, business-friendly title (3-5 words, no jargon) tailored to the question (e.g., "Baseline Churn Benchmark", "Explainable Risk Score", "Robust Customer Segmenter", "Max-Accuracy Fraud Alert")
+- target: best-guess target column as a string, or null if it should be inferred -- Explain why and how it is related to problem.
+- split: object with keys { test_size: number in [0.2, 0.4], random_state: 42, stratify: boolean|string|null when classification }
+- models: array of model names appropriate to the current complexity level
+- metrics: array of metric names
+- notes: 1-2 crisp lines explaining the rationale (why this stage appears here, the chosen split) and clearly naming the model family/complexity stage
+
+Complexity stages (must appear in this order; do not skip from simple directly to combinations):
+1) Baselines: DummyClassifier/DummyRegressor, LogisticRegression/LinearRegression (defaults), DecisionTree, Naive Bayes (classification).
+2) Regularized linear: Ridge, Lasso, ElasticNet (use classification/regression variants as appropriate).
+3) Shallow trees: DecisionTree with small depth tuning.
+4) Bagging: RandomForest, ExtraTrees.
+5) Boosting: GradientBoosting; optionally XGBoost/LightGBM if available (handle unavailability gracefully downstream).
+6) Combinations: Voting or Stacking that combine 2-3 of the best prior models.
+
+Rules:
+- The experiments array MUST be sorted from simplest to most complex as per the stages above.
+- Earlier experiments must NOT list ensemble/combination models.
+- Include 7-8 experiments total.
+- Vary split.test_size between 0.2 and 0.4 across experiments to test robustness (e.g., larger for simpler models or abundant data).
+- Prefer setting target to a column name present in df; only use null if truly ambiguous or no sensible target exists.`;
+
+  const body = {
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: `${description}\n\nQuestion: ${$analysisContext.value}` },
+    ],
+    // Use a broad JSON object format for compatibility with providers that
+    // don't support json_schema under chat/completions.
+    response_format: { type: "json_object" },
+  };
+
+  $modeling.classList.remove("d-none");
+  $modelControls.classList.add("d-none");
+  $modelStatus.innerHTML = loading;
+  $modelExperiments.innerHTML = "";
+  $modelResults.innerHTML = "";
+
+  try {
+  await stream(body, (c) => {
+    ({ experiments: modelingExperiments } = parse(c));
+    if (Array.isArray(modelingExperiments)) {
+      const guessed = guessTarget(data, $analysisContext.value);
+      if (guessed) {
+        for (const exp of modelingExperiments) {
+          if (
+            exp &&
+            (!exp.target || String(exp.target).toLowerCase() === "auto")
+          ) {
+            exp.target = guessed;
+          }
+        }
+      }
+    }
+    drawModelExperiments();
+  });
+  } catch (err) {
+    $modelStatus.innerHTML = `<div class="alert alert-danger">Failed to build models: ${escapeHtml(String(err?.message || err))}</div>`;
+    return;
+  }
+
+  $modelStatus.innerHTML = "";
+  $modelControls.classList.remove("d-none");
+}
+
+// Keep the button wired up, and also expose globally for programmatic usage
+on("generate-model-plans", buildModels);
+window.buildModels = buildModels;
+
+function drawModelExperiments() {
+  if (!Array.isArray(modelingExperiments)) return;
+  const renderSplit = (s) =>
+    `test_size=${s?.test_size ?? 0.2}, random_state=${s?.random_state ?? 42}${s?.stratify ? ", stratify" : ""}`;
+  $modelExperiments.innerHTML = modelingExperiments
+    .map((exp, index) => /* html */ `
+      <div class="col py-3" data-index="${index}">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">${exp.title || "Modeling Experiment"}</h5>
+            <ul class="list-unstyled small text-secondary mb-2">
+              <li><strong>Problem:</strong> ${exp.problem_type || "auto"}</li>
+              <li><strong>Target:</strong> ${exp.target ?? "(auto)"}</li>
+              <li><strong>Split:</strong> ${renderSplit(exp.split || {})}</li>
+            </ul>
+            <p class="card-text mb-1"><strong>Models:</strong> ${Array.isArray(exp.models) ? exp.models.join(", ") : ""}</p>
+            <p class="card-text mb-0"><strong>Metrics:</strong> ${Array.isArray(exp.metrics) ? exp.metrics.join(", ") : ""}</p>
+            ${exp.notes ? `<p class="card-text small text-secondary mt-2 mb-0">${exp.notes}</p>` : ""}
+          </div>
+          <div class="card-footer">
+            <div class="result"></div>
+            <div class="outcome"></div>
+            <div class="stats small text-secondary font-monospace mb-3"></div>
+            <div><button type="button" class="btn btn-sm btn-primary test-model" data-index="${index}">Test</button></div>
+          </div>
+        </div>
+      </div>
+    `)
+    .join("");
+}
+
+$modelExperiments.addEventListener("click", async (e) => {
+  const $btn = e.target.closest(".test-model");
+  if (!$btn) return;
+  const idx = +$btn.dataset.index;
+  const plan = modelingExperiments[idx];
+
+  const systemPrompt = `You are an expert ML engineer.
+Generate concise, robust Python to implement the given modeling experiment on df.
+Requirements:
+- Detect/confirm problem type and target (use plan.target if provided; else infer sensibly from df and plan.problem_type).
+- Train/test split using plan.split (default test_size=0.2, random_state=42; use stratify when classification if possible).
+- Preprocess with ColumnTransformer: numeric -> impute median + StandardScaler; categorical -> impute 'missing' + OneHotEncoder(handle_unknown='ignore').
+- Fit models listed in plan.models (fallback gracefully for unavailable models).
+- Compute metrics:\n  * Classification: accuracy, precision_weighted, recall_weighted, f1_weighted, roc_auc_ovr (guard with try/except), confusion_matrix\n  * Regression: r2, rmse, mae, mse (rmse = sqrt(mse))
+- Return dict: { problem_type, target, models: [{name, metrics}], best, confusion_matrix|null, summary }
+- Keep code compact and deterministic.
+- If scikit-learn is unavailable in environment, gracefully fall back to a baseline using pandas/scipy (e.g., simple mean baseline for regression or majority-class for classification) and return feasible metrics.
+
+Define exactly this function and return only a single Python code block and nothing else:
+\`\`\`python
+import pandas as pd
+import numpy as np
+from typing import Dict, Any
+
+def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
+    # ... implement and return the required dict
+    return {}
+\`\`\``;
+
+  const body = {
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Dataset:\n${description}\n\nPlan:\n${JSON.stringify(plan)}` },
+    ],
+  };
+
+  const $card = $btn.closest(".card");
+  const $result = $card.querySelector(".result");
+  const $outcome = $card.querySelector(".outcome");
+  const $stats = $card.querySelector(".stats");
+  $result.innerHTML = loading;
+  $outcome.innerHTML = "";
+  $stats.innerHTML = "";
+
+  let generatedContent;
+  await stream(body, (c) => {
+    generatedContent = c;
+    try { $result.innerHTML = marked.parse(c); } catch {}
+  });
+
+  // Extract the code inside the last ```python ... ``` block
+  const match = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)].at(-1);
+  let code = match && match[1];
+  if (!code) {
+    $result.innerHTML = `<div class="alert alert-danger">No Python block generated. Please try again.</div>`;
+    return;
+  }
+  // Append invocation
+  code += "\n\nrun_models(pd.DataFrame(data), plan)";
+
+  $outcome.innerHTML = loading;
+
+  const listener = async (event) => {
+    const { result, error } = event.data;
+    pyodideWorker.removeEventListener("message", listener);
+    if (error) {
+      $outcome.innerHTML = `<pre class=\"alert alert-danger\">${error}</pre>`;
+      return;
+    }
+    renderModelResultInCard2(result, $card);
+    const summaryBody = {
+      messages: [
+        {
+          role: "system",
+          content: `Write a clear, decision-ready analysis in Markdown. Use this structure:\n\n##### Headline finding\n\n- Best Model: <model> — why it wins given the metrics\n- Problem: <classification|regression> — Target: <target> — Split: test_size and notes\n\n###### Ranked Comparison\n- Rank top models with 1 short reason each (interpret metrics; do not dump raw numbers).\n\n###### Key Insights\n- 2–4 insights the audience can act on (tie to the question).\n\n###### Risks & Limitations\n- 1–2 caveats (e.g., class imbalance, overfitting risk, data gaps).\n\n###### Next Steps\n- 2 concrete follow-ups (e.g., feature ideas, data collection, validation).\n\nGuidelines:\n- Interpret metrics; avoid raw number spam.\n- Use **bold** to highlight key phrases.\n- If confusion_matrix exists, comment on precision/recall trade-offs.`,
+        },
+        {
+          role: "user",
+          content: `Question: ${$analysisContext.value}\nPlan: ${plan.title}\nProblem: ${result.problem_type}\nTarget: ${result.target}\nBest: ${result.best}\nSplit: ${JSON.stringify(plan.split)}\nPlannedModels: ${JSON.stringify(plan.models)}\nModels: ${JSON.stringify(result.models)}\nConfusionMatrix: ${JSON.stringify(result.confusion_matrix)}`,
+        },
+      ],
+    };
+    await stream(summaryBody, (c) => {
+      $outcome.innerHTML = marked.parse(c);
+    });
+    $result.innerHTML = /* html */ `<details>
+      <summary class=\"h6 my-2\">Modeling code</summary>
+      ${marked.parse(generatedContent)}
+    </details>`;
+  };
+
+  pyodideWorker.addEventListener("message", listener);
+  pyodideWorker.postMessage({ id: "mdl-" + Date.now(), code, data, context: { plan } });
+});
+
+on("run-all-models", () => {
+  const cards = [...document.querySelectorAll("#model-experiments .card")];
+  const pending = cards.filter((c) => !c.querySelector(".outcome").textContent.trim());
+  pending.forEach((c) => c.querySelector(".test-model").click());
+});
+
+on("reset-models", () => {
+  for (const el of document.querySelectorAll("#model-experiments .col")) {
+    const $card = el.querySelector(".card");
+    $card.querySelector(".result").innerHTML = `<button type=\"button\" class=\"btn btn-sm btn-primary test-model\" data-index=\"${el.dataset.index}\">Test</button>`;
+    $card.querySelector(".outcome").textContent = "";
+    $card.querySelector(".stats").textContent = "";
+  }
+});
+
+function renderModelResultInCard2(result, $card) {
+  const $stats = $card.querySelector(".stats");
+  if (!result || !Array.isArray(result.models)) {
+    $stats.innerHTML = "No metrics returned.";
+    return;
+  }
+  const metricNames = Array.from(
+    result.models.reduce((s, m) => {
+      Object.keys(m.metrics || {}).forEach((k) => s.add(k));
+      return s;
+    }, new Set())
+  );
+  const rows = result.models
+    .map((m) => {
+      const cells = metricNames
+        .map((k) => {
+          const v = m.metrics?.[k];
+          if (v === null || v === undefined || Number.isNaN(v)) return "";
+          const n = typeof v === "number" ? (Math.abs(v) >= 1000 ? num(v) : v.toFixed(4)) : v;
+          return `${k}=${n}`;
+        })
+        .join("; ");
+      const name = m.name === result.best ? `${m.name} (best)` : m.name;
+      return `${name}: ${cells}`;
+    })
+    .join(" | ");
+  const meta = `Problem=${result.problem_type}; Target=${result.target || "(auto)"}`;
+  $stats.innerHTML = `${meta} - ${rows}`;
+}
 
 $status.innerHTML = "";
 
