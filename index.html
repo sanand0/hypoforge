@@ -68,25 +68,16 @@
             <button type="button" class="btn btn-outline-secondary" id="openai-config-btn">Configure OpenAI</button>
           </div>
           <div class="mb-3">
+            <label for="mode-select" class="form-label fw-bold">Mode</label>
+            <select id="mode-select" class="form-select">
+              <option value="hypotheses" selected>Hypotheses</option>
+              <option value="modeling">Modeling</option>
+              <option value="quality">Data Quality</option>
+            </select>
+          </div>
+          <div class="mb-3">
             <label for="analysis-prompt" class="form-label fw-bold">Analysis Prompt</label>
-            <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)">You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
-
-1. Create derived columns ONLY IF REQUIRED. E.g. If "CurrentMedication" contains "insulin", classify it as "Injectable", otherwise as "Pill".
-2. If that's not possible, provide the best possible answer based on available data to the hypothesis, making assumptions.
-3. Use the appropriate hypothesis test, e.g. t-test, chi-square, correlation significance test, etc.
-4. Return the results as (success: bool, p_value: float)
-
-Write the code as follows:
-
-\`\`\`python
-import pandas as pd
-import scipy.stats as stats
-
-def test_hypothesis(df) -> (bool, float):
-    # use the imported modules to test the hypothesis
-    return result, p_value
-\`\`\`
-</textarea>
+            <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)"></textarea>
           </div>
           <div class="mb-3">
             <label for="model" class="form-label">Choose the model:</label>
@@ -163,6 +154,7 @@ def test_hypothesis(df) -> (bool, float):
           <div class="d-flex gap-2 flex-wrap">
             <button class="btn btn-success" id="generate-hypotheses">Generate Hypotheses</button>
             <button class="btn btn-secondary" id="generate-model-plans">Build Models</button>
+            <button class="btn btn-secondary" id="generate-quality-plans">Improve Data Quality</button>
           </div>
         </div>
       </div>
@@ -188,6 +180,30 @@ def test_hypothesis(df) -> (bool, float):
       <div id="model-status"></div>
       <div id="model-experiments" class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 my-4 justify-content-center"></div>
       <div id="model-results" class="mx-auto my-3 narrative"></div>
+    </div>
+    
+    <!-- Data Quality -->
+    <div id="quality" class="d-none">
+      <h4 class="text-center mt-5">Data Quality</h4>
+      <div class="text-center my-2 d-none" id="quality-controls">
+        <button type="button" class="btn btn-sm btn-warning mx-1" id="run-all-quality">Run All Steps</button>
+        <button type="button" class="btn btn-sm btn-secondary mx-1" id="undo-quality">Undo Last Step</button>
+        <button type="button" class="btn btn-sm btn-success mx-1" id="download-cleaned" disabled>Download Cleaned CSV</button>
+        <button type="button" class="btn btn-sm btn-danger mx-1" id="reset-quality">Reset</button>
+      </div>
+      <div id="quality-overview" class="narrative mx-auto my-3">
+        <div class="d-flex align-items-center gap-3">
+          <div id="quality-score" class="badge text-bg-info p-2">Quality Score: -</div>
+          <div class="small text-secondary">Higher is better (0–100)</div>
+        </div>
+        <div class="mt-2">
+          <div class="small text-secondary mb-1">Missingness by column</div>
+          <div id="missing-heatmap" class="d-flex flex-wrap align-items-center" style="min-height: 24px"></div>
+        </div>
+      </div>
+      <div id="quality-status"></div>
+      <div id="quality-agents" class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 my-4 justify-content-center"></div>
+      <div id="quality-results" class="mx-auto my-3 narrative"></div>
     </div>
     <div id="status"></div>
   </div>

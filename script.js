@@ -8,6 +8,9 @@ import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
 import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
+import config, { configs } from "./config.js";
+let activeMode = 'hypotheses';
+const activeConfig = () => configs[activeMode];
 
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
@@ -46,6 +49,18 @@ const [
   $synthesis,
   $synthesisResult,
   $status,
+  // Modeling
+  $modeling,
+  $modelResults,
+  $modelStatus,
+  $modelControls,
+  $modelExperiments,
+  // Quality
+  $quality,
+  $qualityResults,
+  $qualityStatus,
+  $qualityControls,
+  $qualityAgents,
 ] = [
   "demo-list",
   "file-upload",
@@ -58,11 +73,26 @@ const [
   "synthesis",
   "synthesis-result",
   "status",
+  // Modeling
+  "modeling",
+  "model-results",
+  "model-status",
+  "model-controls",
+  "model-experiments",
+  // Quality
+  "quality",
+  "quality-results",
+  "quality-status",
+  "quality-controls",
+  "quality-agents",
 ].map(get);
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
 let data, description, hypotheses, currentDemo;
 let modelingExperiments;
+let qualityPlans;
+let lastCleanedCSV = "";
+let qualitySnapshots = [];
 
 const DEFAULT_BASE_URLS = [
   "https://api.openai.com/v1",
@@ -132,6 +162,12 @@ $demoList.innerHTML += demos
   )
   .join("");
 
+// Initialize default analysis prompt from active config
+const $analysisPrompt = document.getElementById("analysis-prompt");
+if ($analysisPrompt && activeConfig()?.defaults?.codeSystemPrompt) {
+  $analysisPrompt.value = activeConfig().defaults.codeSystemPrompt;
+}
+
 const numFormat = new Intl.NumberFormat("en-US", {
   style: "decimal",
   notation: "compact",
@@ -140,29 +176,7 @@ const numFormat = new Intl.NumberFormat("en-US", {
 const num = (val) => numFormat.format(val);
 const dateFormat = d3.timeFormat("%Y-%m-%d %H:%M:%S");
 
-const hypothesesSchema = {
-  type: "object",
-  properties: {
-    hypotheses: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          hypothesis: {
-            type: "string",
-          },
-          benefit: {
-            type: "string",
-          },
-        },
-        required: ["hypothesis", "benefit"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["hypotheses"],
-  additionalProperties: false,
-};
+// Hypotheses schema moved to config.js
 
 // // Schema for modeling plan generation
 // const modelingSchema = {
@@ -314,6 +328,76 @@ function renderPreview(data, maxRows = 100) {
   $contextSection.classList.remove("d-none");
 }
 
+// ----- Quality overview helpers -----
+let qualityBaselineScore = null;
+function computeQualityScore(rows) {
+  try {
+    if (!rows || !rows.length) return 0;
+    const cols = Object.keys(rows[0] || {});
+    const n = rows.length;
+    if (!cols.length) return 0;
+    const missRatios = cols.map((c) => {
+      const m = rows.reduce((acc, r) => acc + (r[c] === null || r[c] === undefined || r[c] === '' ? 1 : 0), 0);
+      return n ? m / n : 0;
+    });
+    const completeness = 1 - d3.mean(missRatios);
+    const typeConsistency = d3.mean(
+      cols.map((c) => {
+        const vals = rows.map((r) => r[c]).filter((v) => v !== null && v !== undefined && v !== '');
+        if (!vals.length) return 0.5;
+        const key = (v) => (v instanceof Date ? 'date' : typeof v);
+        const cnt = new Map();
+        for (const v of vals) cnt.set(key(v), (cnt.get(key(v)) || 0) + 1);
+        let maxc = 0;
+        for (const v of cnt.values()) maxc = Math.max(maxc, v);
+        return maxc / vals.length;
+      }),
+    );
+    const uniqueRatios = cols.map((c) => {
+      const vals = rows.map((r) => r[c]).filter((v) => v !== null && v !== undefined);
+      const uniq = new Set(vals.map((v) => (v instanceof Date ? v.getTime() : String(v)))).size;
+      return vals.length ? uniq / vals.length : 0;
+    });
+    const uniqueness = d3.max(uniqueRatios);
+    const score = 100 * (0.5 * completeness + 0.3 * typeConsistency + 0.2 * uniqueness);
+    return Math.round(Math.max(0, Math.min(100, score)));
+  } catch (e) {
+    return 0;
+  }
+}
+
+function renderMissingnessHeatmap(rows) {
+  const cont = document.getElementById('missing-heatmap');
+  if (!cont) return;
+  cont.innerHTML = '';
+  if (!rows || !rows.length) return;
+  const cols = Object.keys(rows[0] || {});
+  const n = rows.length;
+  for (const c of cols) {
+    const miss = rows.reduce((acc, r) => acc + (r[c] === null || r[c] === undefined || r[c] === '' ? 1 : 0), 0);
+    const ratio = n ? miss / n : 0;
+    const hue = Math.round((1 - ratio) * 120); // 0=red, 120=green
+    const color = `hsl(${hue},70%,50%)`;
+    const box = document.createElement('div');
+    box.title = `${c}: ${(ratio * 100).toFixed(1)}% missing`;
+    box.style.cssText = 'width:16px;height:16px;margin:2px;display:inline-block;border-radius:2px;';
+    box.style.background = color;
+    cont.appendChild(box);
+  }
+}
+
+function updateQualityOverview() {
+  try {
+    renderMissingnessHeatmap(data);
+    const score = computeQualityScore(data);
+    const el = document.getElementById('quality-score');
+    if (el) {
+      const delta = qualityBaselineScore != null ? score - qualityBaselineScore : 0;
+      el.textContent = `Quality Score: ${score}${qualityBaselineScore != null && delta !== 0 ? ` (${delta > 0 ? '+' : ''}${delta})` : ''}`;
+    }
+  } catch {}
+}
+
 // When the user clicks on a demo, load and preview it
 $demoList.addEventListener("click", async (e) => {
   e.preventDefault();
@@ -329,12 +413,7 @@ $demoList.addEventListener("click", async (e) => {
   $analysisContext.value = currentDemo.audience;
 });
 
-// Modeling UI elements
-const $modeling = get("modeling");
-const $modelResults = get("model-results");
-const $modelStatus = get("model-status");
-const $modelControls = get("model-controls");
-const $modelExperiments = get("model-experiments");
+// (Modeling elements are obtained via the initial batch get() destructure above)
 
 // Helper to build a dataset description on demand
 function buildDescription() {
@@ -495,17 +574,11 @@ on("generate-hypotheses", async () => {
   const numColumns = Object.keys(data[0]).length;
   description = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
 
-  const systemPrompt = $analysisContext.value;
-  const body = {
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: description },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: "hypotheses", strict: true, schema: hypothesesSchema },
-    },
-  };
+  const { messages, response_format } = activeConfig().prompts.list({
+    analysisContext: $analysisContext.value,
+    description,
+  });
+  const body = { messages, ...(response_format ? { response_format } : {}) };
 
   $hypotheses.innerHTML = loading;
   await stream(body, (c) => {
@@ -581,24 +654,13 @@ $hypotheses.addEventListener("click", async (e) => {
     const [success, pValue] = result;
     $outcome.classList.add(pValue < 0.05 ? "success" : "failure");
     $stats.innerHTML = /* html */ `<p class="mt-2 mb-0"><strong>p:</strong> ${num(pValue)}</p>`;
-    const body = {
-      messages: [
-        {
-          role: "system",
-          content: `You are an expert data analyst.
-Given a hypothesis and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
-Highlight in **bold** the keywords in the supporting statements.
-Do not mention the p-value but _interpret_ it to support the conclusion quantitatively.`,
-        },
-        {
-          role: "user",
-          content: `Hypothesis: ${hypothesis.hypothesis}\n\n${description}\n\nResult: ${success}. p-value: ${
-            num(pValue)
-          }`,
-        },
-      ],
-    };
-    await stream(body, (c) => {
+    const { messages } = activeConfig().prompts.interpretItem({
+      hypothesis: hypothesis.hypothesis,
+      description,
+      success,
+      pValue: num(pValue),
+    });
+    await stream({ messages }, (c) => {
       $outcome.innerHTML = marked.parse(c);
     });
     $result.innerHTML = /* html */ `<details>
@@ -627,28 +689,8 @@ on("synthesize", async () => {
     }))
     .filter((d) => d.outcome);
 
-  const body = {
-    messages: [
-      {
-        role: "system",
-        content: `Given the below hypotheses and results, summarize the key takeaways and actions in Markdown.
-Begin with the hypotheses with lowest p-values AND highest business impact. Ignore results with errors.
-Use action titles has H5 (#####). Just reading titles should tell the audience EXACTLY what to do.
-Below each, add supporting bullet points that
-  - PROVE the action title, mentioning which hypotheses led to this conclusion.
-  - Do not mention the p-value but _interpret_ it to support the action
-  - Highlight key phrases in **bold**.
-Finally, after a break (---) add a 1-paragraph executive summary section (H5) summarizing these actions.
-`,
-      },
-      {
-        role: "user",
-        content: hypotheses
-          .map((h) => `Hypothesis: ${h.title}\nBenefit: ${h.benefit}\nResult: ${h.outcome}`)
-          .join("\n\n"),
-      },
-    ],
-  };
+  const { messages } = activeConfig().prompts.synthesize({ items: hypotheses });
+  const body = { messages };
 
   $synthesisResult.innerHTML = loading;
   await stream(body, (c) => {
@@ -677,43 +719,11 @@ async function buildModels() {
 
   description = buildDescription();
 
-  const sys = `You are an expert ML engineer. Propose a series of modeling experiments for the user's question and dataset. STRICTLY order experiments by increasing complexity: start with the simplest single-model baselines, then progress through regularized linear methods, shallow trees, bagging, boosting, and finally stacked/voting combinations. Do NOT include any ensemble/stacking before the simpler families are covered.
-
-Respond ONLY with a JSON object of the form { "experiments": [...] } and nothing else.
-
-For each experiment, include exactly these keys:
-- problem_type: "classification" | "regression" | ... -- Explain why?
-- title: short, business-friendly title (3-5 words, no jargon) tailored to the question (e.g., "Baseline Churn Benchmark", "Explainable Risk Score", "Robust Customer Segmenter", "Max-Accuracy Fraud Alert")
-- target: best-guess target column as a string, or null if it should be inferred -- Explain why and how it is related to problem.
-- split: object with keys { test_size: number in [0.2, 0.4], random_state: 42, stratify: boolean|string|null when classification }
-- models: array of model names appropriate to the current complexity level
-- metrics: array of metric names
-- notes: 1-2 crisp lines explaining the rationale (why this stage appears here, the chosen split) and clearly naming the model family/complexity stage
-
-Complexity stages (must appear in this order; do not skip from simple directly to combinations):
-1) Baselines: DummyClassifier/DummyRegressor, LogisticRegression/LinearRegression (defaults), DecisionTree, Naive Bayes (classification).
-2) Regularized linear: Ridge, Lasso, ElasticNet (use classification/regression variants as appropriate).
-3) Shallow trees: DecisionTree with small depth tuning.
-4) Bagging: RandomForest, ExtraTrees.
-5) Boosting: GradientBoosting; optionally XGBoost/LightGBM if available (handle unavailability gracefully downstream).
-6) Combinations: Voting or Stacking that combine 2-3 of the best prior models.
-
-Rules:
-- The experiments array MUST be sorted from simplest to most complex as per the stages above.
-- Earlier experiments must NOT list ensemble/combination models.
-- Include 7-8 experiments total.
-- Vary split.test_size between 0.2 and 0.4 across experiments to test robustness (e.g., larger for simpler models or abundant data).
-- Prefer setting target to a column name present in df; only use null if truly ambiguous or no sensible target exists.`;
-
-  const body = {
-    messages: [
-      { role: "system", content: sys },
-      { role: "user", content: `${description}\n\nQuestion: ${$analysisContext.value}` },
-    ],
-    // Use a broad JSON object format for compatibility with providers that
-    // don't support json_schema under chat/completions.
-    response_format: { type: "json_object" },
-  };
+  const { messages, response_format } = configs.modeling.prompts.list({
+    analysisContext: $analysisContext.value,
+    description,
+  });
+  const body = { messages, ...(response_format ? { response_format } : {}) };
 
   $modeling.classList.remove("d-none");
   $modelControls.classList.add("d-none");
@@ -775,6 +785,7 @@ function drawModelExperiments() {
             <div class="result"></div>
             <div class="outcome"></div>
             <div class="stats small text-secondary font-monospace mb-3"></div>
+            <div class="chart"></div>
             <div><button type="button" class="btn btn-sm btn-primary test-model" data-index="${index}">Test</button></div>
           </div>
         </div>
@@ -789,35 +800,7 @@ $modelExperiments.addEventListener("click", async (e) => {
   const idx = +$btn.dataset.index;
   const plan = modelingExperiments[idx];
 
-  const systemPrompt = `You are an expert ML engineer.
-Generate concise, robust Python to implement the given modeling experiment on df.
-Requirements:
-- Detect/confirm problem type and target (use plan.target if provided; else infer sensibly from df and plan.problem_type).
-- Train/test split using plan.split (default test_size=0.2, random_state=42; use stratify when classification if possible).
-- Preprocess with ColumnTransformer: numeric -> impute median + StandardScaler; categorical -> impute 'missing' + OneHotEncoder(handle_unknown='ignore').
-- Fit models listed in plan.models (fallback gracefully for unavailable models).
-- Compute metrics:\n  * Classification: accuracy, precision_weighted, recall_weighted, f1_weighted, roc_auc_ovr (guard with try/except), confusion_matrix\n  * Regression: r2, rmse, mae, mse (rmse = sqrt(mse))
-- Return dict: { problem_type, target, models: [{name, metrics}], best, confusion_matrix|null, summary }
-- Keep code compact and deterministic.
-- If scikit-learn is unavailable in environment, gracefully fall back to a baseline using pandas/scipy (e.g., simple mean baseline for regression or majority-class for classification) and return feasible metrics.
-
-Define exactly this function and return only a single Python code block and nothing else:
-\`\`\`python
-import pandas as pd
-import numpy as np
-from typing import Dict, Any
-
-def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
-    # ... implement and return the required dict
-    return {}
-\`\`\``;
-
-  const body = {
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Dataset:\n${description}\n\nPlan:\n${JSON.stringify(plan)}` },
-    ],
-  };
+  const body = configs.modeling.prompts.code({ plan, description });
 
   const $card = $btn.closest(".card");
   const $result = $card.querySelector(".result");
@@ -844,6 +827,11 @@ def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
   code += "\n\nrun_models(pd.DataFrame(data), plan)";
 
   $outcome.innerHTML = loading;
+  try {
+    // Snapshot before running for Undo support
+    const snapshot = d3.csvFormat(data || []);
+    qualitySnapshots.push(snapshot);
+  } catch {}
 
   const listener = async (event) => {
     const { result, error } = event.data;
@@ -853,7 +841,7 @@ def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
       return;
     }
     renderModelResultInCard2(result, $card);
-    const summaryBody = {
+    /* const summaryBody = {
       messages: [
         {
           role: "system",
@@ -864,8 +852,13 @@ def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
           content: `Question: ${$analysisContext.value}\nPlan: ${plan.title}\nProblem: ${result.problem_type}\nTarget: ${result.target}\nBest: ${result.best}\nSplit: ${JSON.stringify(plan.split)}\nPlannedModels: ${JSON.stringify(plan.models)}\nModels: ${JSON.stringify(result.models)}\nConfusionMatrix: ${JSON.stringify(result.confusion_matrix)}`,
         },
       ],
-    };
-    await stream(summaryBody, (c) => {
+    }; */
+    const summaryBody2 = configs.modeling.prompts.interpretItem({
+      analysisContext: $analysisContext.value,
+      plan,
+      result,
+    });
+    await stream(summaryBody2, (c) => {
       $outcome.innerHTML = marked.parse(c);
     });
     $result.innerHTML = /* html */ `<details>
@@ -921,9 +914,249 @@ function renderModelResultInCard2(result, $card) {
     .join(" | ");
   const meta = `Problem=${result.problem_type}; Target=${result.target || "(auto)"}`;
   $stats.innerHTML = `${meta} - ${rows}`;
+
+  // Simple bar chart of top models by a chosen metric
+  try {
+    const $chart = $card.querySelector('.chart');
+    if (!$chart) return;
+    const isReg = String(result.problem_type || '').toLowerCase().includes('regress');
+    const prefs = isReg ? ['r2', '-rmse', '-mae'] : ['f1_weighted', 'accuracy', 'roc_auc_ovr'];
+    let chosen = null, invert = false;
+    for (const p of prefs) {
+      const key = p.startsWith('-') ? p.slice(1) : p;
+      const exists = result.models.some((m) => m.metrics && typeof m.metrics[key] === 'number');
+      if (exists) { chosen = key; invert = p.startsWith('-'); break; }
+    }
+    if (!chosen) return;
+    const items = result.models.map((m) => ({ name: m.name, val: m.metrics?.[chosen] })).filter((d) => typeof d.val === 'number');
+    if (!items.length) return;
+    const values = items.map((d) => (invert ? -d.val : d.val));
+    const minV = Math.min(...values);
+    const maxV = Math.max(...values);
+    const span = maxV - minV || 1;
+    items.forEach((d) => { d.score = ((invert ? -d.val : d.val) - minV) / span; d.pct = Math.round(100 * d.score); });
+    items.sort((a, b) => b.score - a.score);
+    const top = items.slice(0, 5);
+    $chart.innerHTML = top
+      .map((d) => `
+        <div class="d-flex align-items-center gap-2 my-1">
+          <div class="text-truncate" style="width:140px">${d.name === result.best ? d.name + ' (best)' : d.name}</div>
+          <div style="flex:1;background:#eee;height:8px;position:relative;border-radius:4px;">
+            <div style="position:absolute;left:0;top:0;height:8px;background:#0d6efd;border-radius:4px;width:${d.pct}%"></div>
+          </div>
+          <div class="small" style="width:64px;text-align:right">${d.val.toFixed(3)}</div>
+        </div>`)
+      .join('');
+  } catch {}
 }
 
-$status.innerHTML = "";
+try { $status.innerHTML = ""; } catch {}
 
 // Initialize SQLite
 const sqlite3 = await sqlite3InitModule({ printErr: console.error });
+
+// Mode dropdown wiring (switches prompts shown in textarea and toggles CTAs)
+const $mode = document.getElementById('mode-select');
+function updateModeUI() {
+  try {
+    if ($analysisPrompt && activeConfig()?.defaults?.codeSystemPrompt)
+      $analysisPrompt.value = activeConfig().defaults.codeSystemPrompt;
+    const gh = document.getElementById('generate-hypotheses');
+    const gm = document.getElementById('generate-model-plans');
+    const gq = document.getElementById('generate-quality-plans');
+    if (gh) gh.classList.toggle('d-none', activeMode !== 'hypotheses');
+    if (gm) gm.classList.toggle('d-none', activeMode !== 'modeling');
+    if (gq) gq.classList.toggle('d-none', activeMode !== 'quality');
+  } catch {}
+}
+$mode?.addEventListener('change', () => { activeMode = $mode.value; updateModeUI(); });
+updateModeUI();
+
+// ------------------ Data Quality ------------------
+async function buildQuality() {
+  if (!data) {
+    alert("Please select a dataset or upload a CSV/XLSX file first.");
+    return;
+  }
+  if (!$analysisContext.value.trim()) {
+    alert("Please provide analysis context describing the question or objective.");
+    return;
+  }
+
+  description = buildDescription();
+  const { messages, response_format } = configs.quality.prompts.list({
+    analysisContext: $analysisContext.value,
+    description,
+  });
+  const body = { messages, ...(response_format ? { response_format } : {}) };
+
+  $quality.classList.remove("d-none");
+  $qualityControls.classList.add("d-none");
+  $qualityStatus.innerHTML = loading;
+  $qualityAgents.innerHTML = "";
+  $qualityResults.innerHTML = "";
+  qualityPlans = undefined;
+  lastCleanedCSV = "";
+  qualityBaselineScore = computeQualityScore(data);
+  updateQualityOverview();
+  const $dl = document.getElementById("download-cleaned");
+  if ($dl) $dl.disabled = true;
+
+  try {
+    await stream(body, (c) => {
+      const parsed = parse(c);
+      qualityPlans = parsed?.agents || parsed?.steps || [];
+      drawQualityAgents();
+    });
+  } catch (err) {
+    $qualityStatus.innerHTML = `<div class="alert alert-danger">Failed to build quality plan: ${escapeHtml(String(err?.message || err))}</div>`;
+    return;
+  }
+
+  $qualityStatus.innerHTML = "";
+  $qualityControls.classList.remove("d-none");
+}
+
+function drawQualityAgents() {
+  if (!Array.isArray(qualityPlans)) return;
+  $qualityAgents.innerHTML = qualityPlans
+    .map((plan, index) => /* html */ `
+      <div class="col py-3" data-index="${index}">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">${plan.title || "Data Quality Agent"}</h5>
+            <p class="card-text mb-1"><strong>Problem:</strong> ${plan.problem || ""}</p>
+            <p class="card-text small text-secondary mb-2"><strong>Approach:</strong> ${plan.approach || ""}</p>
+            <p class="card-text small mb-0"><strong>Columns:</strong> ${Array.isArray(plan.columns) ? plan.columns.join(", ") : "(auto)"}</p>
+          </div>
+          <div class="card-footer">
+            <div class="result"></div>
+            <div class="outcome"></div>
+            <div class="stats small text-secondary font-monospace mb-3"></div>
+            <div><button type="button" class="btn btn-sm btn-primary test-quality" data-index="${index}">Run</button></div>
+          </div>
+        </div>
+      </div>
+    `)
+    .join("");
+}
+
+$qualityAgents?.addEventListener("click", async (e) => {
+  const $btn = e.target.closest(".test-quality");
+  if (!$btn) return;
+  const idx = +$btn.dataset.index;
+  const plan = qualityPlans[idx];
+
+  const body = configs.quality.prompts.code({ plan, description, analysisContext: $analysisContext.value });
+
+  const $card = $btn.closest(".card");
+  const $result = $card.querySelector(".result");
+  const $outcome = $card.querySelector(".outcome");
+  const $stats = $card.querySelector(".stats");
+  $result.innerHTML = loading;
+  $outcome.innerHTML = "";
+  $stats.innerHTML = "";
+
+  let generatedContent;
+  await stream(body, (c) => {
+    generatedContent = c;
+    try { $result.innerHTML = marked.parse(c); } catch {}
+  });
+
+  const match = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)].at(-1);
+  let code = match && match[1];
+  if (!code) {
+    $result.innerHTML = `<div class="alert alert-danger">No Python block generated. Please try again.</div>`;
+    return;
+  }
+  code += "\n\nrun_quality(pd.DataFrame(data), plan)";
+
+  $outcome.innerHTML = loading;
+
+  const listener = async (event) => {
+    const { result, error } = event.data;
+    pyodideWorker.removeEventListener("message", listener);
+    if (error) {
+      $outcome.innerHTML = `<pre class=\"alert alert-danger\">${error}</pre>`;
+      return;
+    }
+    try {
+      if (result?.csv) {
+        lastCleanedCSV = result.csv;
+        try {
+          data = d3.csvParse(lastCleanedCSV, d3.autoType);
+          renderPreview(data);
+          updateQualityOverview();
+        } catch {}
+        const $dl = document.getElementById("download-cleaned");
+        if ($dl) $dl.disabled = !lastCleanedCSV;
+      }
+      $stats.innerHTML = `Rows: ${result?.rows_before ?? "?"} → ${result?.rows_after ?? "?"}`;
+      const summaryBody = configs.quality.prompts.interpretItem({ plan, result });
+      await stream(summaryBody, (c) => {
+        $outcome.innerHTML = marked.parse(c);
+      });
+      $result.innerHTML = /* html */ `<details>
+        <summary class=\"h6 my-2\">Quality agent code</summary>
+        ${marked.parse(generatedContent)}
+      </details>`;
+    } catch (e) {
+      $outcome.innerHTML = `<pre class=\"alert alert-danger\">${escapeHtml(String(e?.message || e))}</pre>`;
+    }
+  };
+
+  pyodideWorker.addEventListener("message", listener);
+  pyodideWorker.postMessage({ id: "dq-" + Date.now(), code, data, context: { plan } });
+});
+
+on("generate-quality-plans", buildQuality);
+
+on("run-all-quality", () => {
+  const cards = [...document.querySelectorAll("#quality-agents .card")];
+  const pending = cards.filter((c) => !c.querySelector(".outcome").textContent.trim());
+  pending.forEach((c) => c.querySelector(".test-quality").click());
+});
+
+on("reset-quality", () => {
+  for (const el of document.querySelectorAll("#quality-agents .col")) {
+    const $card = el.querySelector(".card");
+    $card.querySelector(".result").innerHTML = `<button type=\"button\" class=\"btn btn-sm btn-primary test-quality\" data-index=\"${el.dataset.index}\">Run</button>`;
+    $card.querySelector(".outcome").textContent = "";
+    $card.querySelector(".stats").textContent = "";
+  }
+  lastCleanedCSV = "";
+  const $dl = document.getElementById("download-cleaned");
+  if ($dl) $dl.disabled = true;
+  qualityBaselineScore = computeQualityScore(data);
+  updateQualityOverview();
+  qualitySnapshots = [];
+});
+
+on("undo-quality", () => {
+  if (!qualitySnapshots.length) return;
+  try {
+    lastCleanedCSV = qualitySnapshots.pop();
+    if (lastCleanedCSV) {
+      data = d3.csvParse(lastCleanedCSV, d3.autoType);
+      renderPreview(data);
+      updateQualityOverview();
+      const $dl = document.getElementById("download-cleaned");
+      if ($dl) $dl.disabled = !lastCleanedCSV;
+    }
+  } catch {}
+});
+
+document.getElementById("download-cleaned")?.addEventListener("click", () => {
+  if (!lastCleanedCSV) return;
+  try {
+    const blob = new Blob([lastCleanedCSV], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cleaned_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch {}
+});
