@@ -69,24 +69,7 @@
           </div>
           <div class="mb-3">
             <label for="analysis-prompt" class="form-label fw-bold">Analysis Prompt</label>
-            <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)">You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
-
-1. Create derived columns ONLY IF REQUIRED. E.g. If "CurrentMedication" contains "insulin", classify it as "Injectable", otherwise as "Pill".
-2. If that's not possible, provide the best possible answer based on available data to the hypothesis, making assumptions.
-3. Use the appropriate hypothesis test, e.g. t-test, chi-square, correlation significance test, etc.
-4. Return the results as (success: bool, p_value: float)
-
-Write the code as follows:
-
-\`\`\`python
-import pandas as pd
-import scipy.stats as stats
-
-def test_hypothesis(df) -> (bool, float):
-    # use the imported modules to test the hypothesis
-    return result, p_value
-\`\`\`
-</textarea>
+            <textarea id="analysis-prompt" class="form-control font-monospace" rows="5" placeholder="Enter custom prompt for analysis (optional)"></textarea>
           </div>
           <div class="mb-3">
             <label for="model" class="form-label">Choose the model:</label>
@@ -183,3 +166,4 @@ def test_hypothesis(df) -> (bool, float):
 </body>
 
 </html>
+

@@ -8,7 +8,7 @@ import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
 import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
-
+import config from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
 const get = document.getElementById.bind(document);
@@ -71,6 +71,11 @@ const on = (id, fn) => get(id).addEventListener("click", fn);
 
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
+const $analysisPromptEl = document.getElementById("analysis-prompt");
+if ($analysisPromptEl && !$analysisPromptEl.value.trim()) {
+  $analysisPromptEl.value = config.prompts.code;
+}
+
 on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
 });
@@ -110,30 +115,6 @@ const numFormat = new Intl.NumberFormat("en-US", {
 });
 const num = (val) => numFormat.format(val);
 const dateFormat = d3.timeFormat("%Y-%m-%d %H:%M:%S");
-
-const hypothesesSchema = {
-  type: "object",
-  properties: {
-    hypotheses: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          hypothesis: {
-            type: "string",
-          },
-          benefit: {
-            type: "string",
-          },
-        },
-        required: ["hypothesis", "benefit"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["hypotheses"],
-  additionalProperties: false,
-};
 
 const describe = (data, col) => {
   const values = data.map((d) => d[col]);
@@ -295,7 +276,7 @@ on("generate-hypotheses", async () => {
     ],
     response_format: {
       type: "json_schema",
-      json_schema: { name: "hypotheses", strict: true, schema: hypothesesSchema },
+      json_schema: { name: config.schema.name, strict: true, schema: config.schema.schema },
     },
   };
 
@@ -377,10 +358,7 @@ $hypotheses.addEventListener("click", async (e) => {
       messages: [
         {
           role: "system",
-          content: `You are an expert data analyst.
-Given a hypothesis and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
-Highlight in **bold** the keywords in the supporting statements.
-Do not mention the p-value but _interpret_ it to support the conclusion quantitatively.`,
+          content: config.prompts.interpret,
         },
         {
           role: "user",
@@ -423,15 +401,7 @@ on("synthesize", async () => {
     messages: [
       {
         role: "system",
-        content: `Given the below hypotheses and results, summarize the key takeaways and actions in Markdown.
-Begin with the hypotheses with lowest p-values AND highest business impact. Ignore results with errors.
-Use action titles has H5 (#####). Just reading titles should tell the audience EXACTLY what to do.
-Below each, add supporting bullet points that
-  - PROVE the action title, mentioning which hypotheses led to this conclusion.
-  - Do not mention the p-value but _interpret_ it to support the action
-  - Highlight key phrases in **bold**.
-Finally, after a break (---) add a 1-paragraph executive summary section (H5) summarizing these actions.
-`,
+        content: config.prompts.synthesize,
       },
       {
         role: "user",
