@@ -1,52 +1,52 @@
 // Centralized configuration for prompts and schemas
 // Toggle analysisType to switch between presets
-export const analysisType = 'hypotheses'; // or 'modeling'
+export const analysisType = "hypotheses"; // or 'modeling'
 
 // Schemas for different analysis types
 const schemas = {
   hypotheses: {
-    name: 'hypotheses',
+    name: "hypotheses",
     schema: {
-      type: 'object',
+      type: "object",
       properties: {
         hypotheses: {
-          type: 'array',
+          type: "array",
           items: {
-            type: 'object',
+            type: "object",
             properties: {
-              hypothesis: { type: 'string' },
-              benefit: { type: 'string' },
+              hypothesis: { type: "string" },
+              benefit: { type: "string" },
             },
-            required: ['hypothesis', 'benefit'],
+            required: ["hypothesis", "benefit"],
             additionalProperties: false,
           },
         },
       },
-      required: ['hypotheses'],
+      required: ["hypotheses"],
       additionalProperties: false,
     },
   },
   // Placeholder modeling schema (not used yet). Adjust as needed when enabling modeling.
   modeling: {
-    name: 'models',
+    name: "models",
     schema: {
-      type: 'object',
+      type: "object",
       properties: {
         models: {
-          type: 'array',
+          type: "array",
           items: {
-            type: 'object',
+            type: "object",
             properties: {
-              objective: { type: 'string' },
-              target: { type: 'string' },
-              features: { type: 'array', items: { type: 'string' } },
+              objective: { type: "string" },
+              target: { type: "string" },
+              features: { type: "array", items: { type: "string" } },
             },
-            required: ['objective', 'target'],
+            required: ["objective", "target"],
             additionalProperties: true,
           },
         },
       },
-      required: ['models'],
+      required: ["models"],
       additionalProperties: false,
     },
   },
@@ -92,9 +92,12 @@ Finally, after a break (---) add a 1-paragraph executive summary section (H5) su
   },
   // Early modeling presets (not used yet)
   modeling: {
-    code: `You are an expert data scientist. Propose a minimal, explainable model plan on the provided Pandas DataFrame (df). Prefer simple, robust baselines. Output only Python code stub defining build_model(df) and return (model_name: str, metric: float).`,
-    interpret: `You are an expert data scientist. Summarize the model outcome with a crisp H5 heading and 1-2 supporting sentences highlighting trade-offs and key drivers in **bold**. Avoid raw metric values; interpret them instead.`,
-    synthesize: `Summarize model proposals and outcomes as actionable recommendations (H5 titles), with bullet points citing which proposals support each action.`,
+    code:
+      `You are an expert data scientist. Propose a minimal, explainable model plan on the provided Pandas DataFrame (df). Prefer simple, robust baselines. Output only Python code stub defining build_model(df) and return (model_name: str, metric: float).`,
+    interpret:
+      `You are an expert data scientist. Summarize the model outcome with a crisp H5 heading and 1-2 supporting sentences highlighting trade-offs and key drivers in **bold**. Avoid raw metric values; interpret them instead.`,
+    synthesize:
+      `Summarize model proposals and outcomes as actionable recommendations (H5 titles), with bullet points citing which proposals support each action.`,
   },
 };
 

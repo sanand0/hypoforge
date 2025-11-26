@@ -8,7 +8,7 @@ import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
 import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
-import config from './config.js';
+import config from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 
 const get = document.getElementById.bind(document);
@@ -71,11 +71,10 @@ const on = (id, fn) => get(id).addEventListener("click", fn);
 
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
-const $analysisPromptEl = document.getElementById('analysis-prompt');
+const $analysisPromptEl = document.getElementById("analysis-prompt");
 if ($analysisPromptEl && !$analysisPromptEl.value.trim()) {
   $analysisPromptEl.value = config.prompts.code;
 }
-
 
 on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
@@ -116,7 +115,6 @@ const numFormat = new Intl.NumberFormat("en-US", {
 });
 const num = (val) => numFormat.format(val);
 const dateFormat = d3.timeFormat("%Y-%m-%d %H:%M:%S");
-
 
 const describe = (data, col) => {
   const values = data.map((d) => d[col]);
@@ -431,11 +429,3 @@ $status.innerHTML = "";
 
 // Initialize SQLite
 const sqlite3 = await sqlite3InitModule({ printErr: console.error });
-
-
-
-
-
-
-
-
