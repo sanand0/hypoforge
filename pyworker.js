@@ -11,11 +11,21 @@ self.onmessage = async (event) => {
   await pyodide.loadPackagesFromImports(code);
   // Change the globals() each time
   const dict = pyodide.globals.get("dict");
-  const globals = dict(Object.entries(context));
+  const serialize = (val) => {
+    if (val === undefined) return null;
+    try {
+      return JSON.parse(JSON.stringify(val));
+    } catch (err) {
+      return val;
+    }
+  };
+  const contextEntries = Object.entries(context || {}).map(([key, value]) => [key, pyodide.toPy(serialize(value))]);
+  const globals = dict(contextEntries);
   globals.set("data", pyodide.toPy(data));
   try {
     const resultProxy = await pyodide.runPythonAsync(code, { globals });
-    const result = resultProxy.toJs();
+    const result = resultProxy.toJs({ dict_converter: Object.fromEntries });
+    resultProxy.destroy?.();
     self.postMessage({ id, result });
   } catch (e) {
     self.postMessage({ id, error: e.message });
