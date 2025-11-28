@@ -102,7 +102,8 @@ marked.use({
 });
 
 const renderField = (field) => {
-  const { id, label, type = "text", placeholder = "", helperText = "", required = false, options = [], rows = 4 } = field;
+  const { id, label, type = "text", placeholder = "", helperText = "", required = false, options = [], rows = 4 } =
+    field;
   const labelHtml = label ? `<label for="${id}" class="form-label">${label}</label>` : "";
   const requirement = required ? "required" : "";
   const baseClass = field.type === "checkbox" ? "form-check-input" : "form-control";
@@ -388,22 +389,20 @@ on("generate-artifacts", async () => {
   const numColumns = columns.length;
   const candidateTargets = requiresTarget ? suggestTargets(data) : [];
   targetRecommendations = candidateTargets;
-  const targetHint =
-    requiresTarget && candidateTargets.length
-      ? `\nPotential numeric targets to consider: ${candidateTargets.join(", ")}`
-      : "";
-  datasetSummary = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}${targetHint}`;
+  const targetHint = requiresTarget && candidateTargets.length
+    ? `\nPotential numeric targets to consider: ${candidateTargets.join(", ")}`
+    : "";
+  datasetSummary =
+    `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}${targetHint}`;
 
   const systemPromptDefinition = activeDomain.systemPrompt;
-  const resolvedSystemPrompt =
-    typeof systemPromptDefinition === "function"
-      ? systemPromptDefinition({ formData: formValues, datasetSummary })
-      : systemPromptDefinition;
+  const resolvedSystemPrompt = typeof systemPromptDefinition === "function"
+    ? systemPromptDefinition({ formData: formValues, datasetSummary })
+    : systemPromptDefinition;
   const userPromptDefinition = activeDomain.userPromptTemplate;
-  const resolvedUserPrompt =
-    typeof userPromptDefinition === "function"
-      ? userPromptDefinition({ formData: formValues, datasetSummary })
-      : userPromptDefinition;
+  const resolvedUserPrompt = typeof userPromptDefinition === "function"
+    ? userPromptDefinition({ formData: formValues, datasetSummary })
+    : userPromptDefinition;
 
   const userMessage = resolvedUserPrompt || datasetSummary || "Use the dataset summary to craft meaningful artifacts.";
   const messages = [];
@@ -418,26 +417,21 @@ on("generate-artifacts", async () => {
 
   $artifactList.innerHTML = loading;
   await stream(body, (c) => {
-    const parsed = parse(c);
-    const collectionKey = activeDomain.responseSchema?.collectionKey;
-    const items = collectionKey ? parsed?.[collectionKey] : parsed;
-    if (Array.isArray(items)) {
-      artifacts = requiresTarget
-        ? items.map((entry) => {
-            if (entry && (entry.target === null || entry.target === undefined || entry.target === "")) {
-              const fallbackTarget = targetRecommendations[0] || Object.keys(data?.[0] || {}).find((col) => {
-                const values = data.map((row) => row[col]).filter((val) => typeof val === "number");
-                return values.length > 3;
-              });
-              if (fallbackTarget) {
-                return { ...entry, target: fallbackTarget, target_inferred: true };
-              }
-            }
-            return entry;
-          })
-        : items;
-      renderArtifacts();
-    }
+    artifacts = requiresTarget
+      ? parse(c).tests.map((entry) => {
+        if (entry && (entry.target === null || entry.target === undefined || entry.target === "")) {
+          const fallbackTarget = targetRecommendations[0] || Object.keys(data?.[0] || {}).find((col) => {
+            const values = data.map((row) => row[col]).filter((val) => typeof val === "number");
+            return values.length > 3;
+          });
+          if (fallbackTarget) {
+            return { ...entry, target: fallbackTarget, target_inferred: true };
+          }
+        }
+        return entry;
+      })
+      : items;
+    renderArtifacts();
   });
   $actionsSection.classList.remove("d-none");
 });
@@ -447,44 +441,16 @@ function renderArtifacts() {
     $artifactList.innerHTML = "";
     return;
   }
-  const displayFields = activeDomain.responseSchema?.displayFields || {};
-  const detailFields = activeDomain.responseSchema?.detailFields || [];
-  const titleKey = displayFields.title;
-  const descriptionKey = displayFields.description;
-  const labelize = (field) =>
-    field
-      .replace(/[_-]/g, " ")
-      .replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1));
-
   $artifactList.innerHTML = artifacts
     .map((entry, index) => {
-      const title = titleKey && entry[titleKey] ? entry[titleKey] : `Artifact ${index + 1}`;
-      const description = descriptionKey && entry[descriptionKey] ? entry[descriptionKey] : "";
-      const detailList = detailFields
-        .map((fieldDef) => {
-          const fieldId = typeof fieldDef === "string" ? fieldDef : fieldDef?.id;
-          if (!fieldId || entry[fieldId] === undefined || entry[fieldId] === null) return "";
-          const label = (typeof fieldDef === "object" && fieldDef?.label) || labelize(fieldId);
-          const value = entry[fieldId];
-          let rendered;
-          if (Array.isArray(value)) rendered = value.join(", ");
-          else if (typeof value === "object") rendered = JSON.stringify(value, null, 2);
-          else rendered = value;
-          if (fieldId === "target" && entry.target_inferred) rendered += " (auto-selected)";
-          return `<li><strong>${label}:</strong> ${rendered}</li>`;
-        })
-        .filter(Boolean)
-        .join("");
-      const detailSection = detailList
-        ? `<ul class="list-unstyled small text-muted mb-0">${detailList}</ul>`
-        : "";
+      const title = entry.title ?? `Artifact ${index + 1}`;
+      const details = entry.details ?? "";
       return /* html */ `
         <div class="artifact col py-3" data-index="${index}">
           <div class="card h-100">
             <div class="card-body">
               <h5 class="card-title artifact-title">${title}</h5>
-              <p class="card-text artifact-description">${description}</p>
-              ${detailSection}
+              <p class="card-text artifact-details">${details}</p>
             </div>
             <div class="card-footer">
               <div class="result"></div>
@@ -514,10 +480,9 @@ $artifactList.addEventListener("click", async (e) => {
   }
 
   const evaluationUserTemplate = activeDomain.prompts?.evaluation?.userTemplate;
-  const evaluationUserPrompt =
-    typeof evaluationUserTemplate === "function"
-      ? evaluationUserTemplate({ artifact, datasetSummary })
-      : evaluationUserTemplate || datasetSummary || "";
+  const evaluationUserPrompt = typeof evaluationUserTemplate === "function"
+    ? evaluationUserTemplate({ artifact, datasetSummary })
+    : evaluationUserTemplate || datasetSummary || "";
 
   const body = {
     messages: [
@@ -557,13 +522,16 @@ $artifactList.addEventListener("click", async (e) => {
       return;
     }
     const [success, score] = Array.isArray(result) ? result : [false, result];
-    const artifactMetric =
-      artifact && (artifact.metric ?? artifact.metrics ?? artifact?.evaluation_metric ?? artifact?.score_label);
+    const artifactMetric = artifact
+      && (artifact.metric ?? artifact.metrics ?? artifact?.evaluation_metric ?? artifact?.score_label);
     let scoreLabel = activeDomain.evaluationMeta?.scoreLabel || "Score";
     if (typeof artifactMetric === "string" && artifactMetric.trim()) scoreLabel = artifactMetric;
     else if (Array.isArray(artifactMetric) && artifactMetric.length) scoreLabel = artifactMetric[0];
-    const formattedScore =
-      typeof score === "number" ? num(score) : typeof score === "string" ? score : JSON.stringify(score ?? "");
+    const formattedScore = typeof score === "number"
+      ? num(score)
+      : typeof score === "string"
+      ? score
+      : JSON.stringify(score ?? "");
     $outcome.classList.add(success ? "success" : "failure");
     $stats.innerHTML = /* html */ `<p class="mt-2 mb-0"><strong>${scoreLabel}:</strong> ${formattedScore}</p>`;
 
@@ -614,7 +582,7 @@ on("synthesize", async () => {
   const testedArtifacts = [...document.querySelectorAll(".artifact")]
     .map((card) => ({
       title: card.querySelector(".artifact-title")?.textContent ?? "",
-      description: card.querySelector(".artifact-description")?.textContent ?? "",
+      details: card.querySelector(".artifact-details")?.textContent ?? "",
       outcome: card.querySelector(".outcome")?.textContent.trim() ?? "",
     }))
     .filter((entry) => entry.outcome);
@@ -632,10 +600,9 @@ on("synthesize", async () => {
       },
       {
         role: "user",
-        content:
-          (activeDomain.prompts?.synthesis?.userTemplate &&
-            activeDomain.prompts.synthesis.userTemplate({ artifacts: testedArtifacts })) ||
-          testedArtifacts.map((entry) => `Title: ${entry.title}\nResult: ${entry.outcome}`).join("\n\n"),
+        content: (activeDomain.prompts?.synthesis?.userTemplate
+          && activeDomain.prompts.synthesis.userTemplate({ artifacts: testedArtifacts }))
+          || testedArtifacts.map((entry) => `Title: ${entry.title}\nResult: ${entry.outcome}`).join("\n\n"),
       },
     ],
   };
