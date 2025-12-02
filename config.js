@@ -262,7 +262,7 @@ export const DOMAINS = DOMAIN_BLUEPRINTS.reduce((acc, blueprint) => {
 }, {});
 
 export const APP_CONFIG = {
-  activeType: "modeling",
+  activeType: "hypothesis",
   domains: DOMAINS,
 };
 
