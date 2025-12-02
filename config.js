@@ -30,7 +30,7 @@ const buildResponseSchema = ({ name, titleDescription, detailsDescription }) => 
 });
 
 const APP_CONFIG = {
-  activeType: "modeling",
+  activeType: "hypothesis",
   domains: {
     hypothesis: {
       uiSchema: [
