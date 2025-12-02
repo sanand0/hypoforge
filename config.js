@@ -1,54 +1,136 @@
-// Configuration-driven domain definitions for the app
-export const DOMAINS = {
-  hypothesis: {
-    uiSchema: [
-      {
-        id: "analysis-context",
-        label: "Analysis Context",
-        type: "textarea",
-        placeholder:
-          "E.g., Generate insights for pharmaceutical launch effectiveness, analyze customer behavior patterns, identify optimization opportunities...",
-        required: true,
-        prefillFromDemo: "audience",
-      },
-    ],
-    systemPrompt: "Propose high-impact hypotheses tailored to the provided context and dataset characteristics",
-    userPromptTemplate: ({ formData, datasetSummary }) =>
-      `Context:\n${formData["analysis-context"]}\n\nData:\n${datasetSummary}`,
-    responseSchema: {
-      format: {
-        type: "json_schema",
-        json_schema: {
-          name: "hypotheses",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              tests: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    title: {
-                      type: "string",
-                      description: "Short, business-friendly hypothesis title (4-8 words, no jargon)",
-                    },
-                    details: {
-                      type: "string",
-                      description: "2-3 sentences: Business benefit of hypothesis, how to test, action to take",
-                    },
-                  },
-                  required: ["title", "details"],
-                  additionalProperties: false,
+const CONTEXT_FIELD_ID = "analysis-context";
+
+const BASE_CONTEXT_FIELD = {
+  id: CONTEXT_FIELD_ID,
+  type: "textarea",
+  required: true,
+  prefillFromDemo: "audience",
+};
+
+const DEFAULT_CONTEXT = {
+  label: "Analysis Context",
+  placeholder: "Describe the business context...",
+};
+
+const defaultUserPromptTemplate = ({ formData, datasetSummary }) =>
+  `Context:\n${formData[CONTEXT_FIELD_ID]}\n\nData:\n${datasetSummary}`;
+
+const createContextSchema = (overrides = {}) => {
+  const { label, placeholder, ...rest } = { ...DEFAULT_CONTEXT, ...overrides };
+  return [
+    {
+      ...BASE_CONTEXT_FIELD,
+      ...rest,
+      label,
+      placeholder,
+    },
+  ];
+};
+
+const DEFAULT_TESTS_SCHEMA = {
+  name: "tests",
+  titleDescription: "Short, plain-language title",
+  detailsDescription: "Explain the reasoning, test, and next step.",
+};
+
+const formatArtifactText = (artifact, fallback = "Unspecified artifact") => {
+  if (!artifact || typeof artifact !== "object") return fallback;
+  const candidates = [artifact.hypothesis, artifact.title, artifact.details];
+  const text = candidates.find((value) => typeof value === "string" && value.trim());
+  return text || fallback;
+};
+
+const HYPOTHESIS_INTERPRETATION_PROMPT = `You are an expert data analyst.
+Given a hypothesis and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
+Highlight in **bold** the keywords in the supporting statements.
+Do not mention the p-value but _interpret_ it to support the conclusion quantitatively.`;
+
+const MODELING_INTERPRETATION_PROMPT = `Produce a SHORT, decision-ready Markdown summary focusing only on the top findings.
+
+Output format (nothing more):
+
+##### <Headline insight>
+- Best: <model> - <one crisp reason referencing metrics qualitatively>
+- Watch-out: <one risk or limitation>
+- Next: <one concrete follow-up action>
+
+Rules:
+- Keep each bullet to a single sentence.
+- Use **bold** for the most important phrase in each bullet.
+- Mention precision/recall trade-offs only if confusion_matrix is provided.
+- No additional sections, tables, or long prose.`;
+
+const createResponseSchema = (overrides = {}) => {
+  const { name, titleDescription, detailsDescription } = { ...DEFAULT_TESTS_SCHEMA, ...overrides };
+  return {
+    format: {
+      type: "json_schema",
+      json_schema: {
+        name,
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            tests: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string", description: titleDescription },
+                  details: { type: "string", description: detailsDescription },
                 },
+                required: ["title", "details"],
+                additionalProperties: false,
               },
             },
-            required: ["tests"],
-            additionalProperties: false,
           },
+          required: ["tests"],
+          additionalProperties: false,
         },
       },
     },
+  };
+};
+
+const DEFAULT_DOMAIN_CONFIG = {
+  context: DEFAULT_CONTEXT,
+  systemPrompt: "",
+  userPromptTemplate: defaultUserPromptTemplate,
+  testsSchema: DEFAULT_TESTS_SCHEMA,
+  execution: {},
+  evaluationMeta: {},
+  prompts: {},
+};
+
+const createDomain = (definition = {}) => {
+  const merged = { ...DEFAULT_DOMAIN_CONFIG, ...definition };
+  const context = { ...DEFAULT_CONTEXT, ...(definition.context || {}) };
+  const testsSchema = { ...DEFAULT_TESTS_SCHEMA, ...(definition.testsSchema || {}) };
+
+  return {
+    uiSchema: createContextSchema(context),
+    systemPrompt: merged.systemPrompt,
+    userPromptTemplate: merged.userPromptTemplate,
+    responseSchema: createResponseSchema(testsSchema),
+    execution: merged.execution,
+    evaluationMeta: merged.evaluationMeta,
+    prompts: merged.prompts,
+  };
+};
+
+const DOMAIN_BLUEPRINTS = [
+  {
+    key: "hypothesis",
+    context: {
+      placeholder:
+        "E.g., Generate insights for pharmaceutical launch effectiveness, analyze customer behavior patterns, identify optimization opportunities...",
+    },
+    testsSchema: {
+      name: "hypotheses",
+      titleDescription: "Short, business-friendly hypothesis title (4-8 words, no jargon)",
+      detailsDescription: "2-3 sentences: Business benefit of hypothesis, how to test, action to take",
+    },
+    systemPrompt: "Propose high-impact hypotheses tailored to the provided context and dataset characteristics",
     execution: {
       callable: "test_hypothesis",
     },
@@ -57,8 +139,7 @@ export const DOMAINS = {
     },
     prompts: {
       evaluation: {
-        system:
-          `You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
+        system: `You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
 
 1. Create derived columns ONLY IF REQUIRED. E.g. If "CurrentMedication" contains "insulin", classify it as "Injectable", otherwise as "Pill".
 2. If that's not possible, provide the best possible answer based on available data to the hypothesis, making assumptions.
@@ -76,15 +157,13 @@ def test_hypothesis(df) -> (bool, float):
     return result, p_value
 \`\`\`
 `,
-        userTemplate: ({ artifact, datasetSummary }) => `Hypothesis: ${artifact.hypothesis}\n\n${datasetSummary}`,
+        userTemplate: ({ artifact, datasetSummary }) =>
+          `Hypothesis: ${formatArtifactText(artifact, "Unspecified hypothesis")}\n\n${datasetSummary}`,
       },
       interpretation: {
-        system: `You are an expert data analyst.
-Given a hypothesis and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
-Highlight in **bold** the keywords in the supporting statements.
-Do not mention the p-value but _interpret_ it to support the conclusion quantitatively.`,
+        system: HYPOTHESIS_INTERPRETATION_PROMPT,
         userTemplate: ({ artifact, datasetSummary, result }) =>
-          `Hypothesis: ${artifact.hypothesis}\n\n${datasetSummary}\n\nResult: ${result.success}. Score: ${result.formattedScore}`,
+          `Hypothesis: ${formatArtifactText(artifact, "Unspecified hypothesis")}\n\n${datasetSummary}\n\nResult: ${result.success}. Score: ${result.formattedScore}`,
       },
       synthesis: {
         system: `Given the below hypotheses and results, summarize the key takeaways and actions in Markdown.
@@ -105,113 +184,59 @@ Finally, after a break (---) add a 1-paragraph executive summary section (H5) su
       },
     },
   },
-  modeling: {
-    requiresTarget: true,
-    uiSchema: [
-      {
-        id: "analysis-context",
-        label: "Modeling Context",
-        type: "textarea",
-        placeholder:
-          "Describe the business question, stakeholders, and any deployment constraints that the model must respect.",
-        required: true,
-        prefillFromDemo: "audience",
-      },
-    ],
+  {
+    key: "modeling",
+    context: {
+      label: "Modeling Context",
+      placeholder:
+        "Describe the business question, stakeholders, and any deployment constraints that the model must respect.",
+    },
+    testsSchema: {
+      name: "models",
+      titleDescription: "Short, business-friendly model intent (4-8 words, no jargon)",
+      detailsDescription: "WHY this experiment, target column, model to run, eval metric, train/test split.",
+    },
     systemPrompt:
       "Propose high-impact modeling experiments of increasing sophistication for the user's question and dataset",
-    userPromptTemplate: ({ formData, datasetSummary }) =>
-      `Context:\n${formData["analysis-context"]}\n\nData:\n${datasetSummary}`,
-    responseSchema: {
-      format: {
-        type: "json_schema",
-        json_schema: {
-          name: "models",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              tests: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    title: {
-                      type: "string",
-                      description: "Short, business-friendly model intent (4-8 words, no jargon)",
-                    },
-                    details: {
-                      type: "string",
-                      description: "WHY this experiment, target column, model to run, eval metric, train/test split.",
-                    },
-                  },
-                  required: ["title", "details"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["tests"],
-            additionalProperties: false,
-          },
-        },
-      },
-    },
-    execution: {
-      callable: "run_models",
-      passArtifact: true,
-    },
-    evaluationMeta: {
-      scoreLabel: "Metric",
-    },
+    execution: { callable: "run_models" },
+    evaluationMeta: { scoreLabel: "Metric" },
     prompts: {
       evaluation: {
         system: `You are an expert ML engineer.
-Generate concise, robust Python to implement the given modeling experiment on df.
+Generate concise, robust Python that executes the exact modeling experiment described by the user-provided text.
 Requirements:
-- Detect/confirm target (use plan.target if provided; else infer sensibly from df and plan.title).
-- Train/test split using plan.split (default test_size=0.2, random_state=42; use stratify when classification if possible).
-- Preprocess with ColumnTransformer: numeric -> impute median + StandardScaler; categorical -> impute 'missing' + OneHotEncoder(handle_unknown='ignore'). For OneHotEncoder, prefer sparse_output=False (scikit-learn >= 1.2); if that raises TypeError, fallback to sparse=False.
-- Fit models listed in plan.models (fallback gracefully for unavailable models).
+- Treat the description as the only "plan". Honor any stated target, split, model, or preprocessing directive. When information is missing, infer sensible defaults from df.
+- Always determine a target column. Prefer explicit "Target: <column>"; otherwise infer from context or choose a numeric/business-relevant column.
+- If no split is specified, default to train_test_split(test_size=0.2, random_state=42) and stratify for classification when possible.
+- Preprocess with ColumnTransformer: numeric -> SimpleImputer(strategy="median") + StandardScaler; categorical -> SimpleImputer(fill_value="missing") + OneHotEncoder(handle_unknown="ignore", sparse_output=False) (fallback to sparse=False if needed).
+- Train/evaluate the requested model(s); gracefully fallback if unavailable.
 - Compute metrics:
   * Classification: accuracy, precision_weighted, recall_weighted, f1_weighted, roc_auc_ovr (guard with try/except), confusion_matrix
   * Regression: r2, rmse, mae, mse (rmse = sqrt(mse))
 - Return dict: { target, models: [{name, metrics}], best, confusion_matrix|null, summary }
-- Keep code compact and deterministic.
-- If scikit-learn is unavailable in environment, gracefully fall back to a baseline using pandas/scipy (e.g., simple mean baseline for regression or majority-class for classification) and return feasible metrics.
-
-Define exactly this function and return only a single Python code block and nothing else:
+- Code must define run_models(df) exactly as below and return ONLY one Python block:
 \`\`\`python
 import pandas as pd
 import numpy as np
 from typing import Dict, Any
 
-def run_models(df: pd.DataFrame, plan: Dict[str, Any]) -> dict:
-    # ... implement and return the required dict
-    return {}
-\`\`\``,
-        userTemplate: ({ artifact, datasetSummary }) =>
-          `Dataset:\n${datasetSummary}\n\nPlan:\n${JSON.stringify(artifact, null, 2)}`,
+def run_models(df: pd.DataFrame) -> dict:
+    ...
+\`\`\`
+- If scikit-learn is unavailable, fall back to deterministic baselines using pandas/numpy/scipy.`,
+        userTemplate: ({ artifact, datasetSummary }) => {
+          const description = formatArtifactText(artifact, "").trim();
+          const sections = [];
+          if (description) sections.push(`PRIMARY EXPERIMENT DESCRIPTION:\n${description}`);
+          sections.push(`Dataset Summary:\n${datasetSummary}`);
+          return sections.join("\n\n");
+        },
       },
       interpretation: {
-        system: `Produce a SHORT, decision-ready Markdown summary focusing only on the top findings.
-
-Output format (nothing more):
-
-##### <Headline insight>
-- Best: <model> — <one crisp reason referencing metrics qualitatively>
-- Watch-out: <one risk or limitation>
-- Next: <one concrete follow-up action>
-
-Rules:
-- Keep each bullet to a single sentence.
-- Use **bold** for the most important phrase in each bullet.
-- Mention precision/recall trade-offs only if confusion_matrix is provided.
-- No additional sections, tables, or long prose.`,
+        system: MODELING_INTERPRETATION_PROMPT,
         userTemplate: ({ artifact, datasetSummary, result }) =>
-          `Dataset Context:\n${datasetSummary}\n\nPlan: ${artifact.title}\nTarget: ${result.target}\nBest: ${result.best}\nSplit: ${
-            JSON.stringify(
-              artifact.split,
-            )
+          `Dataset Context:\n${datasetSummary}\n\nPlan: ${formatArtifactText(artifact, "Modeling plan")}\nTarget: ${result.target}\nBest: ${result.best}\nSplit: ${
+            JSON.stringify(artifact.split)
           }\nPlannedModels: ${JSON.stringify(artifact.models)}\nModels: ${
             JSON.stringify(result.models)
           }\nConfusionMatrix: ${JSON.stringify(result.confusion_matrix)}`,
@@ -228,7 +253,13 @@ Rules:
       },
     },
   },
-};
+];
+
+export const DOMAINS = DOMAIN_BLUEPRINTS.reduce((acc, blueprint) => {
+  const { key, ...config } = blueprint;
+  acc[key] = createDomain(config);
+  return acc;
+}, {});
 
 export const APP_CONFIG = {
   activeType: "modeling",
