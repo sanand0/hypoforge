@@ -32,34 +32,34 @@ const getText = (artifact, missing = "") =>
     (value) => typeof value === "string" && value.trim(),
   ) || missing;
 
-const contextPrompt = ({ formData, datasetSummary }) =>`Context:\n${formData["analysis-context"]}\n\nData:\n${datasetSummary}`;
+const contextPrompt = ({ formData, datasetSummary }) =>
+  `Context:\n${formData["analysis-context"]}\n\nData:\n${datasetSummary}`;
 
 export default {
-  activeType: "hypothesis",
-  domains: {
-    hypothesis: {
-      uiSchema: [
-        {
-          id: "analysis-context",
-          type: "textarea",
-          required: true,
-          prefillFromDemo: "audience",
-          label: "Analysis Context",
-          placeholder:
-            "E.g., Generate insights for pharmaceutical launch effectiveness, analyze customer behavior patterns, identify optimization opportunities...",
-        },
-      ],
-      systemPrompt: "Propose high-impact hypotheses tailored to the provided context and dataset characteristics",
-      userPromptTemplate: contextPrompt,
-      responseSchema: schema({
-        name: "hypotheses",
-        title: "Short, business-friendly hypothesis title (4-8 words, no jargon)",
-        details: "2-3 sentences: Business benefit of hypothesis, how to test, action to take",
-      }),
-      evaluationMeta: { scoreLabel: "p-value" },
-      prompts: {
-        evaluation: {
-          system: `You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
+  hypothesis: {
+    uiSchema: [
+      {
+        id: "analysis-context",
+        type: "textarea",
+        required: true,
+        prefillFromDemo: "audience",
+        label: "Analysis Context",
+        placeholder:
+          "E.g., Generate insights for pharmaceutical launch effectiveness, analyze customer behavior patterns, identify optimization opportunities...",
+      },
+    ],
+    systemPrompt: "Propose high-impact hypotheses tailored to the provided context and dataset characteristics",
+    userPromptTemplate: contextPrompt,
+    responseSchema: schema({
+      name: "hypotheses",
+      title: "Short, business-friendly hypothesis title (4-8 words, no jargon)",
+      details: "2-3 sentences: Business benefit of hypothesis, how to test, action to take",
+    }),
+    evaluationMeta: { scoreLabel: "p-value" },
+    prompts: {
+      evaluation: {
+        system:
+          `You are an expert data analyst. Test the given hypothesis on the provided Pandas DataFrame (df) as follows:
 
 1. Create derived columns ONLY IF REQUIRED. E.g. If "CurrentMedication" contains "insulin", classify it as "Injectable", otherwise as "Pill".
 2. If that's not possible, provide the best possible answer based on available data to the hypothesis, making assumptions.
@@ -77,19 +77,21 @@ def execute(df) -> (bool, float):
     return result, p_value
 \`\`\`
 `,
-          userTemplate: ({ artifact, datasetSummary }) =>
-            `Hypothesis: ${getText(artifact, "Unspecified hypothesis")}\n\n${datasetSummary}`,
-        },
-        interpretation: {
-          system: `You are an expert data analyst.
+        userTemplate: ({ artifact, datasetSummary }) =>
+          `Hypothesis: ${getText(artifact, "Unspecified hypothesis")}\n\n${datasetSummary}`,
+      },
+      interpretation: {
+        system: `You are an expert data analyst.
 Given a hypothesis and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
 Highlight in **bold** the keywords in the supporting statements.
 Do not mention the p-value but _interpret_ it to support the conclusion quantitatively.`,
-          userTemplate: ({ artifact, datasetSummary, result }) =>
-            `Hypothesis: ${getText(artifact, "Unspecified hypothesis")}\n\n${datasetSummary}\n\nResult: ${result.success}. Score: ${result.formattedScore}`,
-        },
-        synthesis: {
-          system: `Given the below hypotheses and results, summarize the key takeaways and actions in Markdown.
+        userTemplate: ({ artifact, datasetSummary, result }) =>
+          `Hypothesis: ${
+            getText(artifact, "Unspecified hypothesis")
+          }\n\n${datasetSummary}\n\nResult: ${result.success}. Score: ${result.formattedScore}`,
+      },
+      synthesis: {
+        system: `Given the below hypotheses and results, summarize the key takeaways and actions in Markdown.
 Begin with the hypotheses with lowest p-values AND highest business impact. Ignore results with errors.
 Use action titles has H5 (#####). Just reading titles should tell the audience EXACTLY what to do.
 Below each, add supporting bullet points that
@@ -98,37 +100,37 @@ Below each, add supporting bullet points that
   - Highlight key phrases in **bold**.
 Finally, after a break (---) add a 1-paragraph executive summary section (H5) summarizing these actions.
 `,
-          userTemplate: ({ artifacts }) =>
-            artifacts
-              .map((entry) => `Hypothesis: ${entry.title} Description: ${entry.description} Result: ${entry.outcome}`,)
-              .join("\n\n"),
-        },
+        userTemplate: ({ artifacts }) =>
+          artifacts
+            .map((entry) => `Hypothesis: ${entry.title} Description: ${entry.description} Result: ${entry.outcome}`)
+            .join("\n\n"),
       },
     },
-    modeling: {
-      uiSchema: [
-        {
-          id: "analysis-context",
-          type: "textarea",
-          required: true,
-          prefillFromDemo: "audience",
-          label: "Modeling Context",
-          placeholder:
-            "Describe the business question, stakeholders, and any deployment constraints that the model must respect.",
-        },
-      ],
-      systemPrompt:
-        "Propose high-impact modeling experiments of increasing sophistication for the user's question and dataset",
-      userPromptTemplate: contextPrompt,
-      responseSchema: schema({
-        name: "models",
-        title: "Short, business-friendly model intent (4-8 words, no jargon)",
-        details: "WHY this experiment, target column, model to run, eval metric, train/test split.",
-      }),
-      evaluationMeta: { scoreLabel: "Metric" },
-      prompts: {
-        evaluation: {
-          system: `You are an expert ML engineer.
+  },
+  modeling: {
+    uiSchema: [
+      {
+        id: "analysis-context",
+        type: "textarea",
+        required: true,
+        prefillFromDemo: "audience",
+        label: "Modeling Context",
+        placeholder:
+          "Describe the business question, stakeholders, and any deployment constraints that the model must respect.",
+      },
+    ],
+    systemPrompt:
+      "Propose high-impact modeling experiments of increasing sophistication for the user's question and dataset",
+    userPromptTemplate: contextPrompt,
+    responseSchema: schema({
+      name: "models",
+      title: "Short, business-friendly model intent (4-8 words, no jargon)",
+      details: "WHY this experiment, target column, model to run, eval metric, train/test split.",
+    }),
+    evaluationMeta: { scoreLabel: "Metric" },
+    prompts: {
+      evaluation: {
+        system: `You are an expert ML engineer.
 Generate concise, robust Python that executes the exact modeling experiment described by the user-provided text.
 Requirements:
 - Treat the description as the only "plan". Honor any stated target, split, model, or preprocessing directive. When information is missing, infer sensible defaults from df.
@@ -150,15 +152,15 @@ def execute(df: pd.DataFrame) -> dict:
     ...
 \`\`\`
 - If scikit-learn is unavailable, fall back to deterministic baselines using pandas/numpy/scipy.`,
-          userTemplate: ({ artifact, datasetSummary }) => {
-            const primary = getText(artifact).trim();
-            return [primary && `PRIMARY EXPERIMENT DESCRIPTION:\n${primary}`, `Dataset Summary:\n${datasetSummary}`]
-              .filter(Boolean)
-              .join("\n\n");
-          },
+        userTemplate: ({ artifact, datasetSummary }) => {
+          const primary = getText(artifact).trim();
+          return [primary && `PRIMARY EXPERIMENT DESCRIPTION:\n${primary}`, `Dataset Summary:\n${datasetSummary}`]
+            .filter(Boolean)
+            .join("\n\n");
         },
-        interpretation: {
-          system: `Produce a SHORT, decision-ready Markdown summary focusing only on the top findings.
+      },
+      interpretation: {
+        system: `Produce a SHORT, decision-ready Markdown summary focusing only on the top findings.
 Output format (nothing more):
 
 ##### <Headline insight>
@@ -171,17 +173,17 @@ Rules:
 - Use **bold** for the most important phrase in each bullet.
 - Mention precision/recall trade-offs only if confusion_matrix is provided.
 - No additional sections, tables, or long prose.`,
-          userTemplate: ({ artifact, datasetSummary, result }) =>
-            [`Dataset Context:\n${datasetSummary}`,`Plan: ${getText(artifact, "Modeling plan")}`,`result: ${result}`,].join("\n"),
-        },
-        synthesis: {
-          system:
-            `Summarize evaluated modeling plans as deployment recommendations with H5 headings. Each heading should call out when to prioritize the plan. Add bullet points citing which plans support the recommendation and the qualitative meaning of the metrics. Finish with --- and an executive brief.`,
-          userTemplate: ({ artifacts }) =>
-            artifacts
-              .map((entry) => `Model plan: ${entry.title} Objective: ${entry.details} Result: ${entry.outcome}`)
-              .join("\n\n"),
-        },
+        userTemplate: ({ artifact, datasetSummary, result }) =>
+          [`Dataset Context:\n${datasetSummary}`, `Plan: ${getText(artifact, "Modeling plan")}`, `result: ${result}`]
+            .join("\n"),
+      },
+      synthesis: {
+        system:
+          `Summarize evaluated modeling plans as deployment recommendations with H5 headings. Each heading should call out when to prioritize the plan. Add bullet points citing which plans support the recommendation and the qualitative meaning of the metrics. Finish with --- and an executive brief.`,
+        userTemplate: ({ artifacts }) =>
+          artifacts
+            .map((entry) => `Model plan: ${entry.title} Objective: ${entry.details} Result: ${entry.outcome}`)
+            .join("\n\n"),
       },
     },
   },

@@ -8,9 +8,9 @@ import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
 import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
-import APP_CONFIG from "./config.js";
+import domains from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
-const activeDomain = APP_CONFIG.domains[APP_CONFIG.activeType];
+let domain = "hypothesis";
 
 const get = document.getElementById.bind(document);
 const [
@@ -74,9 +74,7 @@ saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
 const $analysisPromptEl = document.getElementById("analysis-prompt");
 const syncAnalysisPrompt = () => {
-  if ($analysisPromptEl && !$analysisPromptEl.value.trim() && activeDomain.prompts?.evaluation?.system) {
-    $analysisPromptEl.value = activeDomain.prompts.evaluation.system;
-  }
+  if (!$analysisPromptEl.value.trim()) $analysisPromptEl.value = domains[domain].prompts.evaluation.system;
 };
 syncAnalysisPrompt();
 
@@ -124,7 +122,8 @@ const renderField = (field) => {
 
 const renderForm = () => {
   if (!$artifactForm) return;
-  $artifactForm.innerHTML = activeDomain.uiSchema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
+  $artifactForm.innerHTML = domains[domain].uiSchema.map(renderField).join("")
+    || `<p class="text-muted mb-0">No inputs required.</p>`;
 };
 
 const buildMessages = (system, user) => ({
@@ -133,8 +132,6 @@ const buildMessages = (system, user) => ({
     { role: "user", content: user || "" },
   ].filter(Boolean),
 });
-
-renderForm();
 
 const getFieldNode = (id) => $artifactForm?.querySelector(`#${id}`);
 
@@ -149,7 +146,7 @@ const collectFormData = () => {
   const values = {};
   const missing = [];
 
-  for (const field of activeDomain.uiSchema) {
+  for (const field of domains[domain].uiSchema) {
     const raw = formData.get(field.id);
     const value = typeof raw === "string" ? raw.trim() : raw ?? "";
     values[field.id] = value;
@@ -170,7 +167,7 @@ const collectFormData = () => {
 };
 
 const prefillFormFromDemo = (demo) => {
-  for (const field of activeDomain.uiSchema) {
+  for (const field of domains[domain].uiSchema) {
     if (field.prefillFromDemo && demo && demo[field.prefillFromDemo]) {
       setFieldValue(field.id, demo[field.prefillFromDemo]);
     }
@@ -178,7 +175,7 @@ const prefillFormFromDemo = (demo) => {
 };
 
 const resetPrefilledFields = () => {
-  for (const field of activeDomain.uiSchema) {
+  for (const field of domains[domain].uiSchema) {
     if (field.prefillFromDemo) {
       setFieldValue(field.id, "");
     }
@@ -366,11 +363,11 @@ on("generate-artifacts", async () => {
   const numColumns = columns.length;
   datasetSummary = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
 
-  const systemPromptDefinition = activeDomain.systemPrompt;
+  const systemPromptDefinition = domains[domain].systemPrompt;
   const resolvedSystemPrompt = typeof systemPromptDefinition === "function"
     ? systemPromptDefinition({ formData: formValues, datasetSummary })
     : systemPromptDefinition;
-  const userPromptDefinition = activeDomain.userPromptTemplate;
+  const userPromptDefinition = domains[domain].userPromptTemplate;
   const resolvedUserPrompt = typeof userPromptDefinition === "function"
     ? userPromptDefinition({ formData: formValues, datasetSummary })
     : userPromptDefinition;
@@ -378,8 +375,8 @@ on("generate-artifacts", async () => {
   const userMessage = resolvedUserPrompt || datasetSummary || "Use the dataset summary to craft meaningful artifacts.";
   const body = buildMessages(resolvedSystemPrompt, userMessage);
 
-  if (activeDomain.responseSchema?.format) {
-    body.response_format = activeDomain.responseSchema.format;
+  if (domains[domain].responseSchema?.format) {
+    body.response_format = domains[domain].responseSchema.format;
   }
 
   $artifactList.innerHTML = loading;
@@ -428,13 +425,14 @@ $artifactList.addEventListener("click", async (e) => {
   if (!artifact) return;
 
   const promptInput = document.getElementById("analysis-prompt");
-  const evaluationSystemPrompt = (promptInput?.value?.trim() || activeDomain.prompts?.evaluation?.system || "").trim();
+  const evaluationSystemPrompt = (promptInput?.value?.trim() || domains[domain].prompts?.evaluation?.system || "")
+    .trim();
   if (!evaluationSystemPrompt) {
     alert("Please provide an evaluation prompt before testing artifacts.");
     return;
   }
 
-  const evaluationTemplate = activeDomain.prompts?.evaluation?.userTemplate;
+  const evaluationTemplate = domains[domain].prompts?.evaluation?.userTemplate;
   const body = buildMessages(
     evaluationSystemPrompt,
     typeof evaluationTemplate === "function"
@@ -470,10 +468,14 @@ $artifactList.addEventListener("click", async (e) => {
     }
     $outcome.classList.add(result?.success ? "success" : "failure");
     $stats.innerHTML = /* html */ `<p class="mt-2 mb-0">${result?.summary || result[1]}</p>`;
-    if (activeDomain.prompts?.interpretation?.system && activeDomain.prompts?.interpretation?.userTemplate) {
+    if (domains[domain].prompts?.interpretation?.system && domains[domain].prompts?.interpretation?.userTemplate) {
       const interpretationBody = buildMessages(
-        activeDomain.prompts?.interpretation.system,
-        activeDomain.prompts?.interpretation.userTemplate({ artifact, datasetSummary, result: JSON.stringify(result) }),
+        domains[domain].prompts?.interpretation.system,
+        domains[domain].prompts?.interpretation.userTemplate({
+          artifact,
+          datasetSummary,
+          result: JSON.stringify(result),
+        }),
       );
       await stream(interpretationBody, (c) => {
         $outcome.innerHTML = marked.parse(c);
@@ -514,9 +516,9 @@ on("synthesize", async () => {
   }
 
   const body = buildMessages(
-    activeDomain.prompts?.synthesis?.system || "Summarize the evaluated artifacts.",
-    (activeDomain.prompts?.synthesis?.userTemplate
-      && activeDomain.prompts.synthesis.userTemplate({ artifacts: testedArtifacts }))
+    domains[domain].prompts?.synthesis?.system || "Summarize the evaluated artifacts.",
+    (domains[domain].prompts?.synthesis?.userTemplate
+      && domains[domain].prompts.synthesis.userTemplate({ artifacts: testedArtifacts }))
       || testedArtifacts.map((entry) => `Title: ${entry.title}\nResult: ${entry.outcome}`).join("\n\n"),
   );
 
@@ -534,6 +536,14 @@ on("reset", () => {
     $outcome.classList.remove("success", "failure");
   }
 });
+
+function init(domain) {
+  $analysisPromptEl.value = domains[domain].prompts.evaluation.system;
+  renderForm();
+}
+
+document.querySelector("#domain-selection").addEventListener("change", (e) => init(domain = e.target.value));
+init(domain);
 
 $status.innerHTML = "";
 
