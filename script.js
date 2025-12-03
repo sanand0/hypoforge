@@ -8,13 +8,9 @@ import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import saveform from "https://cdn.jsdelivr.net/npm/saveform@1.2";
 import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
-import APP_CONFIG from "./config.js";
+import domains from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
-const activeDomain = APP_CONFIG.domains[APP_CONFIG.activeType];
-const requiresTarget = Boolean(activeDomain.requiresTarget);
-if (!activeDomain) {
-  throw new Error(`Unknown active type: ${APP_CONFIG.activeType}`);
-}
+let domain = "hypothesis";
 
 const get = document.getElementById.bind(document);
 const [
@@ -43,9 +39,8 @@ const [
   "status",
 ].map(get);
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
-const MODEL_FIELD = ["mode", "l"].join("");
 
-let data, datasetSummary, artifacts, currentDemo, targetRecommendations = [];
+let data, datasetSummary, artifacts, currentDemo;
 
 const DEFAULT_BASE_URLS = [
   "https://api.openai.com/v1",
@@ -60,7 +55,7 @@ async function* llm(body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ...body,
-      [MODEL_FIELD]: document.getElementById("llm-engine").value,
+      model: document.getElementById("llm-engine").value,
       stream: true,
       stream_options: { include_usage: true },
     }),
@@ -78,10 +73,10 @@ const on = (id, fn) => get(id).addEventListener("click", fn);
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
 const $analysisPromptEl = document.getElementById("analysis-prompt");
-const defaultEvaluationPrompt = activeDomain.prompts?.evaluation?.system || "";
-if ($analysisPromptEl && !$analysisPromptEl.value.trim() && defaultEvaluationPrompt) {
-  $analysisPromptEl.value = defaultEvaluationPrompt;
-}
+const syncAnalysisPrompt = () => {
+  if (!$analysisPromptEl.value.trim()) $analysisPromptEl.value = domains[domain].prompts.evaluation.system;
+};
+syncAnalysisPrompt();
 
 on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
@@ -102,7 +97,8 @@ marked.use({
 });
 
 const renderField = (field) => {
-  const { id, label, type = "text", placeholder = "", helperText = "", required = false, options = [], rows = 4 } = field;
+  const { id, label, type = "text", placeholder = "", helperText = "", required = false, options = [], rows = 4 } =
+    field;
   const labelHtml = label ? `<label for="${id}" class="form-label">${label}</label>` : "";
   const requirement = required ? "required" : "";
   const baseClass = field.type === "checkbox" ? "form-check-input" : "form-control";
@@ -126,11 +122,16 @@ const renderField = (field) => {
 
 const renderForm = () => {
   if (!$artifactForm) return;
-  const schema = activeDomain.uiSchema || [];
-  $artifactForm.innerHTML = schema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
+  $artifactForm.innerHTML = domains[domain].uiSchema.map(renderField).join("")
+    || `<p class="text-muted mb-0">No inputs required.</p>`;
 };
 
-renderForm();
+const buildMessages = (system, user) => ({
+  messages: [
+    system && { role: "system", content: system },
+    { role: "user", content: user || "" },
+  ].filter(Boolean),
+});
 
 const getFieldNode = (id) => $artifactForm?.querySelector(`#${id}`);
 
@@ -141,12 +142,11 @@ const setFieldValue = (id, value) => {
 
 const collectFormData = () => {
   if (!$artifactForm) return {};
-  const schema = activeDomain.uiSchema || [];
   const formData = new FormData($artifactForm);
   const values = {};
   const missing = [];
 
-  for (const field of schema) {
+  for (const field of domains[domain].uiSchema) {
     const raw = formData.get(field.id);
     const value = typeof raw === "string" ? raw.trim() : raw ?? "";
     values[field.id] = value;
@@ -167,8 +167,7 @@ const collectFormData = () => {
 };
 
 const prefillFormFromDemo = (demo) => {
-  const schema = activeDomain.uiSchema || [];
-  for (const field of schema) {
+  for (const field of domains[domain].uiSchema) {
     if (field.prefillFromDemo && demo && demo[field.prefillFromDemo]) {
       setFieldValue(field.id, demo[field.prefillFromDemo]);
     }
@@ -176,8 +175,7 @@ const prefillFormFromDemo = (demo) => {
 };
 
 const resetPrefilledFields = () => {
-  const schema = activeDomain.uiSchema || [];
-  for (const field of schema) {
+  for (const field of domains[domain].uiSchema) {
     if (field.prefillFromDemo) {
       setFieldValue(field.id, "");
     }
@@ -229,28 +227,6 @@ const describe = (data, col) => {
   return "";
 };
 
-const suggestTargets = (rows, maxSuggestions = 5) => {
-  if (!Array.isArray(rows) || !rows.length) return [];
-  const columns = Object.keys(rows[0] || {});
-  const candidates = [];
-  for (const col of columns) {
-    const lower = col.toLowerCase();
-    if (lower.includes("id") || lower.includes("key")) continue;
-    const values = rows
-      .map((row) => row[col])
-      .filter((value) => value !== null && value !== undefined);
-    if (!values.length) continue;
-    if (!values.every((value) => typeof value === "number")) continue;
-    const uniqueValues = new Set(values);
-    if (uniqueValues.size <= 3) continue;
-    candidates.push({ col, variability: d3.deviation(values) ?? 0 });
-  }
-  return candidates
-    .sort((a, b) => (b.variability || 0) - (a.variability || 0))
-    .slice(0, maxSuggestions)
-    .map(({ col }) => col);
-};
-
 const testButton = (index) =>
   /* html */ `<button type="button" class="btn btn-sm btn-primary test-artifact" data-index="${index}">Test</button>`;
 
@@ -289,7 +265,6 @@ function clearDataAndUI() {
   $actionsSection.classList.add("d-none");
   artifacts = [];
   datasetSummary = "";
-  targetRecommendations = [];
 
   // Hide context section and preview
   $contextSection.classList.add("d-none");
@@ -386,58 +361,29 @@ on("generate-artifacts", async () => {
   const columns = Object.keys(data[0] ?? {});
   const columnDescription = columns.map((col) => `- ${col}: ${describe(data, col)}`).join("\n");
   const numColumns = columns.length;
-  const candidateTargets = requiresTarget ? suggestTargets(data) : [];
-  targetRecommendations = candidateTargets;
-  const targetHint =
-    requiresTarget && candidateTargets.length
-      ? `\nPotential numeric targets to consider: ${candidateTargets.join(", ")}`
-      : "";
-  datasetSummary = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}${targetHint}`;
+  datasetSummary = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
 
-  const systemPromptDefinition = activeDomain.systemPrompt;
-  const resolvedSystemPrompt =
-    typeof systemPromptDefinition === "function"
-      ? systemPromptDefinition({ formData: formValues, datasetSummary })
-      : systemPromptDefinition;
-  const userPromptDefinition = activeDomain.userPromptTemplate;
-  const resolvedUserPrompt =
-    typeof userPromptDefinition === "function"
-      ? userPromptDefinition({ formData: formValues, datasetSummary })
-      : userPromptDefinition;
+  const systemPromptDefinition = domains[domain].systemPrompt;
+  const resolvedSystemPrompt = typeof systemPromptDefinition === "function"
+    ? systemPromptDefinition({ formData: formValues, datasetSummary })
+    : systemPromptDefinition;
+  const userPromptDefinition = domains[domain].userPromptTemplate;
+  const resolvedUserPrompt = typeof userPromptDefinition === "function"
+    ? userPromptDefinition({ formData: formValues, datasetSummary })
+    : userPromptDefinition;
 
   const userMessage = resolvedUserPrompt || datasetSummary || "Use the dataset summary to craft meaningful artifacts.";
-  const messages = [];
-  if (resolvedSystemPrompt) messages.push({ role: "system", content: resolvedSystemPrompt });
-  messages.push({ role: "user", content: userMessage });
+  const body = buildMessages(resolvedSystemPrompt, userMessage);
 
-  const body = { messages };
-
-  if (activeDomain.responseSchema?.format) {
-    body.response_format = activeDomain.responseSchema.format;
+  if (domains[domain].responseSchema?.format) {
+    body.response_format = domains[domain].responseSchema.format;
   }
 
   $artifactList.innerHTML = loading;
   await stream(body, (c) => {
-    const parsed = parse(c);
-    const collectionKey = activeDomain.responseSchema?.collectionKey;
-    const items = collectionKey ? parsed?.[collectionKey] : parsed;
-    if (Array.isArray(items)) {
-      artifacts = requiresTarget
-        ? items.map((entry) => {
-            if (entry && (entry.target === null || entry.target === undefined || entry.target === "")) {
-              const fallbackTarget = targetRecommendations[0] || Object.keys(data?.[0] || {}).find((col) => {
-                const values = data.map((row) => row[col]).filter((val) => typeof val === "number");
-                return values.length > 3;
-              });
-              if (fallbackTarget) {
-                return { ...entry, target: fallbackTarget, target_inferred: true };
-              }
-            }
-            return entry;
-          })
-        : items;
-      renderArtifacts();
-    }
+    const parsed = parse(c) || {};
+    artifacts = Array.isArray(parsed.tests) ? parsed.tests : [];
+    renderArtifacts();
   });
   $actionsSection.classList.remove("d-none");
 });
@@ -447,44 +393,16 @@ function renderArtifacts() {
     $artifactList.innerHTML = "";
     return;
   }
-  const displayFields = activeDomain.responseSchema?.displayFields || {};
-  const detailFields = activeDomain.responseSchema?.detailFields || [];
-  const titleKey = displayFields.title;
-  const descriptionKey = displayFields.description;
-  const labelize = (field) =>
-    field
-      .replace(/[_-]/g, " ")
-      .replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1));
-
   $artifactList.innerHTML = artifacts
     .map((entry, index) => {
-      const title = titleKey && entry[titleKey] ? entry[titleKey] : `Artifact ${index + 1}`;
-      const description = descriptionKey && entry[descriptionKey] ? entry[descriptionKey] : "";
-      const detailList = detailFields
-        .map((fieldDef) => {
-          const fieldId = typeof fieldDef === "string" ? fieldDef : fieldDef?.id;
-          if (!fieldId || entry[fieldId] === undefined || entry[fieldId] === null) return "";
-          const label = (typeof fieldDef === "object" && fieldDef?.label) || labelize(fieldId);
-          const value = entry[fieldId];
-          let rendered;
-          if (Array.isArray(value)) rendered = value.join(", ");
-          else if (typeof value === "object") rendered = JSON.stringify(value, null, 2);
-          else rendered = value;
-          if (fieldId === "target" && entry.target_inferred) rendered += " (auto-selected)";
-          return `<li><strong>${label}:</strong> ${rendered}</li>`;
-        })
-        .filter(Boolean)
-        .join("");
-      const detailSection = detailList
-        ? `<ul class="list-unstyled small text-muted mb-0">${detailList}</ul>`
-        : "";
+      const title = entry.title ?? `Artifact ${index + 1}`;
+      const details = entry.details ?? "";
       return /* html */ `
         <div class="artifact col py-3" data-index="${index}">
           <div class="card h-100">
             <div class="card-body">
               <h5 class="card-title artifact-title">${title}</h5>
-              <p class="card-text artifact-description">${description}</p>
-              ${detailSection}
+              <p class="card-text artifact-details">${details}</p>
             </div>
             <div class="card-footer">
               <div class="result"></div>
@@ -507,24 +425,20 @@ $artifactList.addEventListener("click", async (e) => {
   if (!artifact) return;
 
   const promptInput = document.getElementById("analysis-prompt");
-  const evaluationSystemPrompt = (promptInput?.value?.trim() || defaultEvaluationPrompt || "").trim();
+  const evaluationSystemPrompt = (promptInput?.value?.trim() || domains[domain].prompts?.evaluation?.system || "")
+    .trim();
   if (!evaluationSystemPrompt) {
     alert("Please provide an evaluation prompt before testing artifacts.");
     return;
   }
 
-  const evaluationUserTemplate = activeDomain.prompts?.evaluation?.userTemplate;
-  const evaluationUserPrompt =
-    typeof evaluationUserTemplate === "function"
-      ? evaluationUserTemplate({ artifact, datasetSummary })
-      : evaluationUserTemplate || datasetSummary || "";
-
-  const body = {
-    messages: [
-      { role: "system", content: evaluationSystemPrompt },
-      { role: "user", content: evaluationUserPrompt },
-    ],
-  };
+  const evaluationTemplate = domains[domain].prompts?.evaluation?.userTemplate;
+  const body = buildMessages(
+    evaluationSystemPrompt,
+    typeof evaluationTemplate === "function"
+      ? evaluationTemplate({ artifact, datasetSummary })
+      : evaluationTemplate || datasetSummary || "",
+  );
 
   const $resultContainer = $trigger.closest(".card");
   const $result = $resultContainer.querySelector(".result");
@@ -537,13 +451,9 @@ $artifactList.addEventListener("click", async (e) => {
     $result.innerHTML = marked.parse(c);
   });
 
-  const callable = activeDomain.execution?.callable || "evaluate_artifact";
-  const passArtifact = Boolean(activeDomain.execution?.passArtifact);
   const codeBlocks = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)];
   let code = codeBlocks.length ? codeBlocks.at(-1)[1] : generatedContent;
-  const callArgs = ["pd.DataFrame(data)"];
-  if (passArtifact) callArgs.push("plan");
-  code += `\n\n${callable}(${callArgs.join(", ")})`;
+  code += `\n\nexecute(${["pd.DataFrame(data)"]})`;
 
   $outcome.classList.remove("success", "failure");
   $outcome.innerHTML = loading;
@@ -556,34 +466,17 @@ $artifactList.addEventListener("click", async (e) => {
       $outcome.innerHTML = `<pre class="alert alert-danger">${error}</pre>`;
       return;
     }
-    const [success, score] = Array.isArray(result) ? result : [false, result];
-    const artifactMetric =
-      artifact && (artifact.metric ?? artifact.metrics ?? artifact?.evaluation_metric ?? artifact?.score_label);
-    let scoreLabel = activeDomain.evaluationMeta?.scoreLabel || "Score";
-    if (typeof artifactMetric === "string" && artifactMetric.trim()) scoreLabel = artifactMetric;
-    else if (Array.isArray(artifactMetric) && artifactMetric.length) scoreLabel = artifactMetric[0];
-    const formattedScore =
-      typeof score === "number" ? num(score) : typeof score === "string" ? score : JSON.stringify(score ?? "");
-    $outcome.classList.add(success ? "success" : "failure");
-    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0"><strong>${scoreLabel}:</strong> ${formattedScore}</p>`;
-
-    const interpretationSystemPrompt = activeDomain.prompts?.interpretation?.system;
-    const interpretationTemplate = activeDomain.prompts?.interpretation?.userTemplate;
-
-    if (interpretationSystemPrompt && interpretationTemplate) {
-      const interpretationBody = {
-        messages: [
-          { role: "system", content: interpretationSystemPrompt },
-          {
-            role: "user",
-            content: interpretationTemplate({
-              artifact,
-              datasetSummary,
-              result: { success, score, formattedScore, scoreLabel },
-            }),
-          },
-        ],
-      };
+    $outcome.classList.add(result?.success ? "success" : "failure");
+    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0">${result?.summary || result[1]}</p>`;
+    if (domains[domain].prompts?.interpretation?.system && domains[domain].prompts?.interpretation?.userTemplate) {
+      const interpretationBody = buildMessages(
+        domains[domain].prompts?.interpretation.system,
+        domains[domain].prompts?.interpretation.userTemplate({
+          artifact,
+          datasetSummary,
+          result: JSON.stringify(result),
+        }),
+      );
       await stream(interpretationBody, (c) => {
         $outcome.innerHTML = marked.parse(c);
       });
@@ -599,9 +492,7 @@ $artifactList.addEventListener("click", async (e) => {
 
   $outcome.innerHTML = loading;
   pyodideWorker.addEventListener("message", listener);
-  const workerContext = {};
-  if (passArtifact) workerContext.plan = artifact;
-  pyodideWorker.postMessage({ id: "1", code, data, context: workerContext });
+  pyodideWorker.postMessage({ id: "1", code, data, context: artifact });
 });
 
 on("run-all", () => {
@@ -614,7 +505,7 @@ on("synthesize", async () => {
   const testedArtifacts = [...document.querySelectorAll(".artifact")]
     .map((card) => ({
       title: card.querySelector(".artifact-title")?.textContent ?? "",
-      description: card.querySelector(".artifact-description")?.textContent ?? "",
+      details: card.querySelector(".artifact-details")?.textContent ?? "",
       outcome: card.querySelector(".outcome")?.textContent.trim() ?? "",
     }))
     .filter((entry) => entry.outcome);
@@ -624,21 +515,12 @@ on("synthesize", async () => {
     return;
   }
 
-  const body = {
-    messages: [
-      {
-        role: "system",
-        content: activeDomain.prompts?.synthesis?.system || "Summarize the evaluated artifacts.",
-      },
-      {
-        role: "user",
-        content:
-          (activeDomain.prompts?.synthesis?.userTemplate &&
-            activeDomain.prompts.synthesis.userTemplate({ artifacts: testedArtifacts })) ||
-          testedArtifacts.map((entry) => `Title: ${entry.title}\nResult: ${entry.outcome}`).join("\n\n"),
-      },
-    ],
-  };
+  const body = buildMessages(
+    domains[domain].prompts?.synthesis?.system || "Summarize the evaluated artifacts.",
+    (domains[domain].prompts?.synthesis?.userTemplate
+      && domains[domain].prompts.synthesis.userTemplate({ artifacts: testedArtifacts }))
+      || testedArtifacts.map((entry) => `Title: ${entry.title}\nResult: ${entry.outcome}`).join("\n\n"),
+  );
 
   $summaryResult.innerHTML = loading;
   await stream(body, (c) => {
@@ -654,6 +536,14 @@ on("reset", () => {
     $outcome.classList.remove("success", "failure");
   }
 });
+
+function init(domain) {
+  $analysisPromptEl.value = domains[domain].prompts.evaluation.system;
+  renderForm();
+}
+
+document.querySelector("#domain-selection").addEventListener("change", (e) => init(domain = e.target.value));
+init(domain);
 
 $status.innerHTML = "";
 

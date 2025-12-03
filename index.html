@@ -48,6 +48,17 @@
   </nav>
 
   <div class="container-fluid">
+    <!-- Button group toggle between Hypotheses | Modeling -->
+    <div class="d-flex justify-content-center my-4">
+      <div class="btn-group" role="group" aria-label="Mode selection" id="domain-selection">
+        <input type="radio" class="btn-check" name="domain" value="hypothesis" id="domain-hypotheses" autocomplete="off" checked>
+        <label class="btn btn-outline-primary" for="domain-hypotheses">Hypotheses</label>
+
+        <input type="radio" class="btn-check" name="domain" value="modeling" id="domain-modeling" autocomplete="off">
+        <label class="btn btn-outline-primary" for="domain-modeling">Modeling</label>
+      </div>
+    </div>
+
     <h1 class="display-1 my-4 text-center">Hypothesis Forge</h1>
     <h2 class="display-6 text-center">Automatically generate and test hypotheses on data</h2>
     <div class="mx-auto my-3 narrative">
@@ -163,4 +174,3 @@
 </body>
 
 </html>
-
