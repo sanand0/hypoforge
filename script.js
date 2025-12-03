@@ -11,10 +11,6 @@ import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-bui
 import APP_CONFIG from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
 const activeDomain = APP_CONFIG.domains[APP_CONFIG.activeType];
-if (!activeDomain) {
-  throw new Error(`Unknown active type: ${APP_CONFIG.activeType}`);
-}
-const uiSchema = activeDomain.uiSchema || [];
 
 const get = document.getElementById.bind(document);
 const [
@@ -77,10 +73,9 @@ const on = (id, fn) => get(id).addEventListener("click", fn);
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
 const $analysisPromptEl = document.getElementById("analysis-prompt");
-let defaultEvaluationPrompt = activeDomain.prompts?.evaluation?.system || "";
 const syncAnalysisPrompt = () => {
-  if ($analysisPromptEl && !$analysisPromptEl.value.trim() && defaultEvaluationPrompt) {
-    $analysisPromptEl.value = defaultEvaluationPrompt;
+  if ($analysisPromptEl && !$analysisPromptEl.value.trim() && activeDomain.prompts?.evaluation?.system) {
+    $analysisPromptEl.value = activeDomain.prompts.evaluation.system;
   }
 };
 syncAnalysisPrompt();
@@ -129,7 +124,7 @@ const renderField = (field) => {
 
 const renderForm = () => {
   if (!$artifactForm) return;
-  $artifactForm.innerHTML = uiSchema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
+  $artifactForm.innerHTML = activeDomain.uiSchema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
 };
 
 const buildMessages = (system, user) => ({
@@ -138,29 +133,6 @@ const buildMessages = (system, user) => ({
     { role: "user", content: user || "" },
   ].filter(Boolean),
 });
-
-const summarizeResult = (artifact, rawResult) => {
-  const structured = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult);
-  const tuple = Array.isArray(rawResult) ? rawResult : [false, rawResult];
-  const success = structured ? true : Boolean(tuple[0]);
-  const score = structured ? rawResult : tuple[1];
-  const artifactMetric = artifact
-    && (artifact.metric ?? artifact.metrics ?? artifact?.evaluation_metric ?? artifact?.score_label);
-  let scoreLabel = activeDomain.evaluationMeta?.scoreLabel || "Score";
-  if (typeof artifactMetric === "string" && artifactMetric.trim()) scoreLabel = artifactMetric;
-  else if (Array.isArray(artifactMetric) && artifactMetric.length) scoreLabel = artifactMetric[0];
-  const formattedScore = structured
-    ? score.summary || JSON.stringify(score)
-    : typeof score === "number"
-    ? num(score)
-    : typeof score === "string"
-    ? score
-    : JSON.stringify(score ?? "");
-  const interpretationPayload = structured
-    ? score
-    : { success, score, formattedScore, scoreLabel };
-  return { success, scoreLabel, formattedScore, interpretationPayload, structured };
-};
 
 renderForm();
 
@@ -177,7 +149,7 @@ const collectFormData = () => {
   const values = {};
   const missing = [];
 
-  for (const field of uiSchema) {
+  for (const field of activeDomain.uiSchema) {
     const raw = formData.get(field.id);
     const value = typeof raw === "string" ? raw.trim() : raw ?? "";
     values[field.id] = value;
@@ -198,7 +170,7 @@ const collectFormData = () => {
 };
 
 const prefillFormFromDemo = (demo) => {
-  for (const field of uiSchema) {
+  for (const field of activeDomain.uiSchema) {
     if (field.prefillFromDemo && demo && demo[field.prefillFromDemo]) {
       setFieldValue(field.id, demo[field.prefillFromDemo]);
     }
@@ -206,7 +178,7 @@ const prefillFormFromDemo = (demo) => {
 };
 
 const resetPrefilledFields = () => {
-  for (const field of uiSchema) {
+  for (const field of activeDomain.uiSchema) {
     if (field.prefillFromDemo) {
       setFieldValue(field.id, "");
     }
@@ -456,18 +428,19 @@ $artifactList.addEventListener("click", async (e) => {
   if (!artifact) return;
 
   const promptInput = document.getElementById("analysis-prompt");
-  const evaluationSystemPrompt = (promptInput?.value?.trim() || defaultEvaluationPrompt || "").trim();
+  const evaluationSystemPrompt = (promptInput?.value?.trim() || activeDomain.prompts?.evaluation?.system || "").trim();
   if (!evaluationSystemPrompt) {
     alert("Please provide an evaluation prompt before testing artifacts.");
     return;
   }
 
-  const evaluationUserTemplate = activeDomain.prompts?.evaluation?.userTemplate;
-  const evaluationUserPrompt = typeof evaluationUserTemplate === "function"
-    ? evaluationUserTemplate({ artifact, datasetSummary })
-    : evaluationUserTemplate || datasetSummary || "";
-
-  const body = buildMessages(evaluationSystemPrompt, evaluationUserPrompt);
+  const evaluationTemplate = activeDomain.prompts?.evaluation?.userTemplate;
+  const body = buildMessages(
+    evaluationSystemPrompt,
+    typeof evaluationTemplate === "function"
+      ? evaluationTemplate({ artifact, datasetSummary })
+      : evaluationTemplate || datasetSummary || "",
+  );
 
   const $resultContainer = $trigger.closest(".card");
   const $result = $resultContainer.querySelector(".result");
@@ -480,13 +453,9 @@ $artifactList.addEventListener("click", async (e) => {
     $result.innerHTML = marked.parse(c);
   });
 
-  const callable = activeDomain.execution?.callable || "evaluate_artifact";
-  const passArtifact = Boolean(activeDomain.execution?.passArtifact);
   const codeBlocks = [...generatedContent.matchAll(/```python\n*([\s\S]*?)\n```(\n|$)/g)];
   let code = codeBlocks.length ? codeBlocks.at(-1)[1] : generatedContent;
-  const callArgs = ["pd.DataFrame(data)"];
-  if (passArtifact) callArgs.push("plan");
-  code += `\n\n${callable}(${callArgs.join(", ")})`;
+  code += `\n\nexecute(${["pd.DataFrame(data)"]})`;
 
   $outcome.classList.remove("success", "failure");
   $outcome.innerHTML = loading;
@@ -499,17 +468,12 @@ $artifactList.addEventListener("click", async (e) => {
       $outcome.innerHTML = `<pre class="alert alert-danger">${error}</pre>`;
       return;
     }
-    const { success, scoreLabel, formattedScore, interpretationPayload } = summarizeResult(artifact, result);
-    $outcome.classList.add(success ? "success" : "failure");
-    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0"><strong>${scoreLabel}:</strong> ${formattedScore}</p>`;
-
-    const interpretationSystemPrompt = activeDomain.prompts?.interpretation?.system;
-    const interpretationTemplate = activeDomain.prompts?.interpretation?.userTemplate;
-
-    if (interpretationSystemPrompt && interpretationTemplate) {
+    $outcome.classList.add(result?.success ? "success" : "failure");
+    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0">${result?.summary || result[1]}</p>`;
+    if (activeDomain.prompts?.interpretation?.system && activeDomain.prompts?.interpretation?.userTemplate) {
       const interpretationBody = buildMessages(
-        interpretationSystemPrompt,
-        interpretationTemplate({ artifact, datasetSummary, result: interpretationPayload }),
+        activeDomain.prompts?.interpretation.system,
+        activeDomain.prompts?.interpretation.userTemplate({ artifact, datasetSummary, result: JSON.stringify(result) }),
       );
       await stream(interpretationBody, (c) => {
         $outcome.innerHTML = marked.parse(c);
@@ -526,9 +490,7 @@ $artifactList.addEventListener("click", async (e) => {
 
   $outcome.innerHTML = loading;
   pyodideWorker.addEventListener("message", listener);
-  const workerContext = {};
-  if (passArtifact) workerContext.plan = artifact;
-  pyodideWorker.postMessage({ id: "1", code, data, context: workerContext });
+  pyodideWorker.postMessage({ id: "1", code, data, context: artifact });
 });
 
 on("run-all", () => {
