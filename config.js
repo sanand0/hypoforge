@@ -35,7 +35,7 @@ const getText = (artifact, missing = "") =>
 const contextPrompt = ({ formData, datasetSummary }) =>`Context:\n${formData["analysis-context"]}\n\nData:\n${datasetSummary}`;
 
 export default {
-  activeType: "hypothesis",
+  activeType: "modeling",
   domains: {
     hypothesis: {
       uiSchema: [
@@ -183,6 +183,20 @@ Rules:
               .join("\n\n"),
         },
       },
+    },
+  },
+  modeCopy: {
+    hypothesis: {
+      brand: "HypoForge",
+      heroTitle: "HypoForge",
+      heroSubtitle: "Automatically generate and test hypotheses on data",
+      heroBody: "HypoForge analyzes your dataset, surfaces high-impact hypotheses, and validates them with rigorous statistics.",
+    },
+    modeling: {
+      brand: "Model Forge",
+      heroTitle: "Model Forge",
+      heroSubtitle: "Design, compare, and explain predictive experiments",
+      heroBody: "Model Forge recommends grounded ML experiments, evaluates them, and explains which setup is worth operationalizing.",
     },
   },
 };

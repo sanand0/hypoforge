@@ -10,7 +10,16 @@ import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm";
 import sqlite3InitModule from "https://esm.sh/@sqlite.org/sqlite-wasm@3.46.1-build3";
 import APP_CONFIG from "./config.js";
 const pyodideWorker = new Worker("./pyworker.js", { type: "module" });
-const activeDomain = APP_CONFIG.domains[APP_CONFIG.activeType];
+const domains = APP_CONFIG.domains || {};
+let activeType = (APP_CONFIG.activeType && domains[APP_CONFIG.activeType])
+  ? APP_CONFIG.activeType
+  : Object.keys(domains)[0];
+let activeDomain = domains[activeType] ?? {};
+let lastRenderedMode = null;
+const syncActiveDomain = () => {
+  activeDomain = domains[activeType] ?? {};
+  return activeDomain;
+};
 
 const get = document.getElementById.bind(document);
 const [
@@ -38,6 +47,25 @@ const [
   "artifact-summary",
   "status",
 ].map(get);
+const $modeToggle = document.getElementById("mode-toggle");
+const getModeButtons = () => [...($modeToggle?.querySelectorAll("[data-mode]") || [])];
+const $brandTitle = document.getElementById("brand-title");
+const $heroTitle = document.getElementById("hero-title");
+const $heroSubtitle = document.getElementById("hero-subtitle");
+const $heroBody = document.getElementById("hero-body");
+const MODE_COPY = APP_CONFIG.modeCopy || {};
+const setTextContent = (node, text) => {
+  if (!node || typeof text !== "string") return;
+  if (node.textContent !== text) node.textContent = text;
+};
+const applyModeCopy = () => {
+  const copy = MODE_COPY[activeType];
+  if (!copy) return;
+  setTextContent($brandTitle, copy.brand);
+  setTextContent($heroTitle, copy.heroTitle);
+  setTextContent($heroSubtitle, copy.heroSubtitle);
+  setTextContent($heroBody, copy.heroBody);
+};
 const loading = /* html */ `<div class="text-center my-5"><div class="spinner-border" role="status"></div></div>`;
 
 let data, datasetSummary, artifacts, currentDemo;
@@ -73,12 +101,12 @@ const on = (id, fn) => get(id).addEventListener("click", fn);
 saveform("#hypoforge-settings", { exclude: "[type=\"file\"]" });
 
 const $analysisPromptEl = document.getElementById("analysis-prompt");
-const syncAnalysisPrompt = () => {
-  if ($analysisPromptEl && !$analysisPromptEl.value.trim() && activeDomain.prompts?.evaluation?.system) {
-    $analysisPromptEl.value = activeDomain.prompts.evaluation.system;
-  }
+const applyModePrompt = () => {
+  if (!$analysisPromptEl) return;
+  const prompt = activeDomain.prompts?.evaluation?.system || "";
+  $analysisPromptEl.value = prompt;
 };
-syncAnalysisPrompt();
+applyModePrompt();
 
 on("openai-config-btn", async () => {
   await openaiConfig({ defaultBaseUrls: DEFAULT_BASE_URLS, show: true });
@@ -124,7 +152,10 @@ const renderField = (field) => {
 
 const renderForm = () => {
   if (!$artifactForm) return;
-  $artifactForm.innerHTML = activeDomain.uiSchema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
+  if (lastRenderedMode === activeType) return;
+  const schema = activeDomain?.uiSchema ?? [];
+  $artifactForm.innerHTML = schema.map(renderField).join("") || `<p class="text-muted mb-0">No inputs required.</p>`;
+  lastRenderedMode = activeType;
 };
 
 const buildMessages = (system, user) => ({
@@ -134,22 +165,46 @@ const buildMessages = (system, user) => ({
   ].filter(Boolean),
 });
 
-renderForm();
+syncModeUI();
 
-const getFieldNode = (id) => $artifactForm?.querySelector(`#${id}`);
+for (const btn of getModeButtons()) {
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    const { mode } = event.currentTarget.dataset;
+    if (mode) {
+      setMode(mode);
+    }
+  });
+}
 
-const setFieldValue = (id, value) => {
+function getFieldNode(id) {
+  return $artifactForm?.querySelector(`#${id}`);
+}
+
+function setFieldValue(id, value) {
   const node = getFieldNode(id);
   if (node) node.value = value ?? "";
-};
+}
+
+function syncModeUI({ resetArtifacts = false } = {}) {
+  syncActiveDomain();
+  applyModeCopy();
+  renderForm();
+  if (currentDemo) prefillFormFromDemo(currentDemo);
+  else resetPrefilledFields();
+  applyModePrompt();
+  if (resetArtifacts) clearArtifactsUI();
+  updateModeToggleUI();
+}
 
 const collectFormData = () => {
   if (!$artifactForm) return {};
   const formData = new FormData($artifactForm);
   const values = {};
   const missing = [];
+  const schema = activeDomain?.uiSchema ?? [];
 
-  for (const field of activeDomain.uiSchema) {
+  for (const field of schema) {
     const raw = formData.get(field.id);
     const value = typeof raw === "string" ? raw.trim() : raw ?? "";
     values[field.id] = value;
@@ -169,21 +224,53 @@ const collectFormData = () => {
   return values;
 };
 
-const prefillFormFromDemo = (demo) => {
-  for (const field of activeDomain.uiSchema) {
+function prefillFormFromDemo(demo) {
+  for (const field of activeDomain?.uiSchema) {
     if (field.prefillFromDemo && demo && demo[field.prefillFromDemo]) {
       setFieldValue(field.id, demo[field.prefillFromDemo]);
     }
   }
-};
+}
 
-const resetPrefilledFields = () => {
-  for (const field of activeDomain.uiSchema) {
+function resetPrefilledFields() {
+  for (const field of activeDomain?.uiSchema) {
     if (field.prefillFromDemo) {
       setFieldValue(field.id, "");
     }
   }
-};
+}
+
+function clearArtifactsUI() {
+  artifacts = [];
+  if ($artifactList) $artifactList.innerHTML = "";
+  if ($actionsSection) $actionsSection.classList.add("d-none");
+  if ($summaryResult) $summaryResult.innerHTML = "";
+}
+
+function updateModeToggleUI() {
+  const buttons = getModeButtons();
+  if (!buttons.length) return;
+  for (const btn of buttons) {
+    const isActive = btn.dataset.mode === activeType;
+    btn.classList.toggle("btn-light", isActive);
+    btn.classList.toggle("text-dark", isActive);
+    btn.classList.toggle("btn-outline-light", !isActive);
+    btn.setAttribute("aria-pressed", isActive);
+  }
+}
+
+function setMode(nextType) {
+  if (!domains[nextType]) {
+    updateModeToggleUI();
+    return;
+  }
+  if (nextType === activeType) {
+    updateModeToggleUI();
+    return;
+  }
+  activeType = nextType;
+  syncModeUI({ resetArtifacts: true });
+}
 
 // Load configurations and render the demos
 $status.innerHTML = loading;
@@ -366,11 +453,12 @@ on("generate-artifacts", async () => {
   const numColumns = columns.length;
   datasetSummary = `The Pandas DataFrame df has ${data.length} rows and ${numColumns} columns:\n${columnDescription}`;
 
-  const systemPromptDefinition = activeDomain.systemPrompt;
+  const domain = activeDomain;
+  const systemPromptDefinition = domain.systemPrompt;
   const resolvedSystemPrompt = typeof systemPromptDefinition === "function"
     ? systemPromptDefinition({ formData: formValues, datasetSummary })
     : systemPromptDefinition;
-  const userPromptDefinition = activeDomain.userPromptTemplate;
+  const userPromptDefinition = domain.userPromptTemplate;
   const resolvedUserPrompt = typeof userPromptDefinition === "function"
     ? userPromptDefinition({ formData: formValues, datasetSummary })
     : userPromptDefinition;
@@ -378,8 +466,8 @@ on("generate-artifacts", async () => {
   const userMessage = resolvedUserPrompt || datasetSummary || "Use the dataset summary to craft meaningful artifacts.";
   const body = buildMessages(resolvedSystemPrompt, userMessage);
 
-  if (activeDomain.responseSchema?.format) {
-    body.response_format = activeDomain.responseSchema.format;
+  if (domain.responseSchema?.format) {
+    body.response_format = domain.responseSchema.format;
   }
 
   $artifactList.innerHTML = loading;

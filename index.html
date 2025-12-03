@@ -35,12 +35,19 @@
 <body>
   <nav class="navbar navbar-expand-lg bg-body-tertiary" data-bs-theme="dark">
     <div class="container-fluid">
-      <a class="navbar-brand" href=".">Hypothesis Forge</a>
+      <a class="navbar-brand" id="brand-title" href=".">Model Forge</a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
-        <div class="ms-auto">
+        <div class="ms-auto d-flex flex-column flex-lg-row gap-3 align-items-lg-center">
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="text-uppercase small text-light fw-semibold">Mode</span>
+            <div class="btn-group btn-group-sm" role="group" id="mode-toggle" aria-label="Switch analysis mode">
+              <button type="button" class="btn btn-outline-light mode-toggle-btn" data-mode="hypothesis">Hypothesis</button>
+              <button type="button" class="btn btn-outline-light mode-toggle-btn" data-mode="modeling">Modeling</button>
+            </div>
+          </div>
           <div class="bootstrap-dark-theme"></div>
         </div>
       </div>
@@ -48,10 +55,10 @@
   </nav>
 
   <div class="container-fluid">
-    <h1 class="display-1 my-4 text-center">Hypothesis Forge</h1>
-    <h2 class="display-6 text-center">Automatically generate and test hypotheses on data</h2>
+    <h1 class="display-1 my-4 text-center" id="hero-title">Model Forge</h1>
+    <h2 class="display-6 text-center" id="hero-subtitle">Design, compare, and explain predictive experiments</h2>
     <div class="mx-auto my-3 narrative">
-      <p>Hypothesis Forge analyzes your data and generates hypotheses that you can test. Then it automatically tests them for you and gives you the results.</p>
+      <p id="hero-body">Model Forge recommends grounded ML experiments, evaluates them, and explains which setup is worth operationalizing.</p>
     </div>
 
     <form id="hypoforge-settings" class="narrative mx-auto">
