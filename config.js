@@ -187,4 +187,62 @@ Rules:
       },
     },
   },
+  dataQuality: {
+    uiSchema: [
+      {
+        id: "analysis-context",
+        type: "textarea",
+        required: true,
+        prefillFromDemo: "audience",
+        label: "Data Quality Context",
+        placeholder:
+          "E.g., Identify data quality issues affecting reporting accuracy, assess data completeness for customer records, evaluate data consistency across sources...",
+      },
+    ],
+    systemPrompt:
+      "Propose high-impact data quality checks tailored to the provided context and dataset characteristics",
+    userPromptTemplate: contextPrompt,
+    responseSchema: schema({
+      name: "data_quality_checks",
+      title: "Short, business-friendly check title (4-8 words, no jargon)",
+      details: "2-3 sentences: Business impact of issue, how to detect, action to take",
+    }),
+    evaluationMeta: { scoreLabel: "Issue Score" },
+    prompts: {
+      evaluation: {
+        system:
+          `You are an expert data analyst. Evaluate the specified data quality check on the provided Pandas DataFrame (df) as follows:
+    Implement the check as described, quantifying the issue (e.g., percentage of missing values, number of duplicates, inconsistency rate).
+    Return the results as (success: bool, issue_score: float) where success indicates whether the data passes the quality check (True = pass, False = fail), and issue_score quantifies the severity of the issue (higher means more severe).
+Write the code as follows:
+\`\`\`python
+import pandas as pd
+import numpy as np
+def execute(df) -> (bool, float):
+    ...
+\`\`\`
+`,
+        userTemplate: ({ artifact, datasetSummary }) =>
+          `Data Quality Check: ${getText(artifact, "Unspecified data quality check")}\n\n${datasetSummary}`,
+      },
+      interpretation: {
+        system: `You are an expert data analyst.
+Given a data quality check and its outcome, provide a plain English summary of the findings as a crisp H5 heading (#####), followed by 1-2 concise supporting sentences.
+Highlight in **bold** the keywords in the supporting statements.
+Do not mention the issue score but _interpret_ it to support the conclusion quantitatively.`,
+        userTemplate: ({ artifact, datasetSummary, result }) =>
+          `Data Quality Check: ${
+            getText(artifact, "Unspecified data quality check")}\n\n${datasetSummary}\n\nResult: ${result.success}. Score: ${result.formattedScore}`,
+      },
+      synthesis: {
+        system: `Given the below data quality checks and results, summarize the key takeaways and actions in Markdown. Begin with the checks with highest issue scores AND highest business impact. Ignore results with errors.
+         Use action titles has H5 (#####). Just reading titles should tell the audience EXACTLY what to do. 
+         Below each, add supporting bullet points that - PROVE the action title, mentioning which checks led to this conclusion. - Do not mention the issue score but _interpret_ it to support the action - Highlight key phrases in **bold**. Finally, after a break (---) add a 1-paragraph executive summary section (H5) summarizing these actions.`,
+        userTemplate: ({ artifacts }) =>  
+          artifacts
+            .map((entry) => `Data Quality Check: ${entry.title} Description: ${entry.description} Result: ${entry.outcome}`)
+            .join("\n\n"),
+      },
+    },
+  },
 };

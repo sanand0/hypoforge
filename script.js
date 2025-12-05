@@ -467,7 +467,8 @@ $artifactList.addEventListener("click", async (e) => {
       return;
     }
     $outcome.classList.add(result?.success ? "success" : "failure");
-    $stats.innerHTML = /* html */ `<p class="mt-2 mb-0">${result?.summary || result[1]}</p>`;
+    $stats.innerHTML = `<p>${JSON.stringify(result)}</p>`;
+
     if (domains[domain].prompts?.interpretation?.system && domains[domain].prompts?.interpretation?.userTemplate) {
       const interpretationBody = buildMessages(
         domains[domain].prompts?.interpretation.system,
